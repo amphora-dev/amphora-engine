@@ -31,6 +31,7 @@ SRC="$PWD"
 # Build tree. Inside `bst build` it lives in the sandbox build dir (and is kept
 # as the element's buildtree); the dev loop (dev/wine.sh) points it outside.
 OUT="${AMPHORA_BUILD_DIR:-$SRC/_amphora}"
+# Siblings: configure_flags passes the tools tree to the target tree as ../tools.
 TOOLS="$OUT/tools"
 BUILD="$OUT/wine"
 JOBS="${JOBS:-$(nproc)}"
@@ -48,6 +49,10 @@ if command -v recc >/dev/null 2>&1 && [ -n "${RECC_SERVER:-}" ] && [ -S "${RECC_
   RECC=recc
   RECC_WRAP="$OUT/recc-wrap"
   export RECC_LOG_LEVEL=info RECC_LOG_DIRECTORY=/tmp/recc-logs
+  # Paths under the source tree enter action keys relative to it. The sandbox
+  # build root is /buildstream/<project>/<element>, so without this a renamed
+  # element or project (or another checkout location) misses every action.
+  export RECC_PROJECT_ROOT="$SRC"
   mkdir -p "$RECC_LOG_DIRECTORY"
 fi
 
@@ -95,7 +100,8 @@ configure_flags=(
   --exec-prefix="$WINE_PREFIX"
   --enable-archs=arm64ec,aarch64,i386
   --with-mingw=clang
-  --with-wine-tools="$TOOLS"
+  # Relative (to $BUILD, where make runs): no build-root path in any command.
+  --with-wine-tools=../tools
   --disable-tests
   --disable-win16
   # amd_ags_x64 needs libdrm.
@@ -124,8 +130,10 @@ target_env() {
   export PKG_CONFIG=pkg-config PKG_CONFIG_PATH=''
   export PKG_CONFIG_SYSROOT_DIR="$TARGET_SYSROOT"
   export PKG_CONFIG_LIBDIR="$TARGET_SYSROOT/usr/lib/pkgconfig:$TARGET_SYSROOT/usr/share/pkgconfig"
-  export CFLAGS="-O2 -g -DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES"
-  export CROSSCFLAGS="-O2 -g"
+  # -fdebug-compilation-dir=.: debug info records no build-root path either, so
+  # the objects themselves do not depend on where the tree was built.
+  export CFLAGS="-O2 -g -fdebug-compilation-dir=. -DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES"
+  export CROSSCFLAGS="-O2 -g -fdebug-compilation-dir=."
   export LDFLAGS="-Wl,-z,max-page-size=16384"
 }
 
@@ -200,13 +208,14 @@ configure_all() {
   (
     host_env
     cd "$TOOLS"
-    "$SRC/configure" --enable-win64 --without-x --without-gstreamer --without-vulkan \
+    "$(realpath --relative-to="$TOOLS" "$SRC")/configure" --enable-win64 --without-x --without-gstreamer --without-vulkan \
       --without-wayland --without-pulse --without-alsa --without-sdl --disable-tests
   )
   (
     target_env
     cd "$BUILD"
-    "$SRC/configure" "${configure_flags[@]}"
+    # A relative srcdir makes every source and -I path in the build relative.
+    "$(realpath --relative-to="$BUILD" "$SRC")/configure" "${configure_flags[@]}"
   )
 }
 
