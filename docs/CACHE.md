@@ -1,12 +1,12 @@
 # 缓存
 
-Wine 是这里唯一编译时间长的元素：约 1.2 万次编译调用，冷编约 40 分钟（OrbStack amd64 上 40:01，GitHub runner 上 39:26）。所有缓存都在 BuildStream 自己的本地缓存（`~/.cache/buildstream`）里，不用沙箱外的 ccache，也没有远程缓存服务器。
+Wine 是这里唯一编译时间长的元素：约 1.2 万次编译调用，冷编时 Wine 元素在 GitHub runner 上 26:12，在 OrbStack amd64 上 40:01。所有缓存都在 BuildStream 自己的本地缓存（`~/.cache/buildstream`）里，不用沙箱外的 ccache，也没有远程缓存服务器。
 
 | 缓存什么 | 什么时候命中 | 代价 |
 |---|---|---|
 | 元素产物 | 元素和它所有依赖的输入都没变 | 秒级；只重做下游，例如只改 `scripts/runtime.sh` 时只重新打包 |
 | workspace 构建树（开发机） | 在 workspace 里改普通 `.c` | 约 5 分钟；`scripts/wine.sh` 只在 configure 的输入变了才重新 configure |
-| 单次编译（recc） | 换 Wine ref、改 `configure.ac`、换分支：元素 key 变了，但大部分 `.o` 的输入没变 | 全部命中时 Wine 约 15 分钟（OrbStack 上 15:16） |
+| 单次编译（recc） | 换 Wine ref、改 `configure.ac`、换分支：元素 key 变了，但大部分 `.o` 的输入没变 | 全部命中时 Wine 元素 7:06（GitHub runner），15:16（OrbStack） |
 
 开发机靠本机磁盘就够了。CI 的 runner 每次都是空的，所以要把本地缓存的一部分带到下一次运行，见下面的“CI 快照”。
 
@@ -41,6 +41,16 @@ main 上没精确命中 → 构建后导出并保存新快照（构建失败也�
 - GitHub 每个仓库的 cache 上限 10 GB，7 天没被访问就淘汰。workflow 每周一、四定时跑一次：输入没变时精确命中、什么都不编，只为了让快照保持被访问。
 - 开发机读不到 Actions cache（GitHub 没有下载接口），用自己的本地缓存。
 
+实测（2026-11-08，ubuntu-24.04 runner）：
+
+| 情况 | 整个 job | `bst build` | 其中 |
+|---|---|---|---|
+| 冷编（没有快照） | 31:35 | 29:49 | Wine 26:12，Wine 源码 clone 约 2 分钟，SDK 下载加导入约 1 分钟，打包 1:24 |
+| 精确命中 | 1:53 | 1 秒 | 恢复快照 29 秒，导入 2 秒 |
+| 只改 Wine 的 key（recc 全部命中） | 11:56 | 10:29 | Wine 7:06，Wine 源码 clone 1:46，SDK 约 1 分钟，打包 1:30 |
+
+快照压缩后 1.02 GiB（产物 2.22 GiB + recc 1.59 GiB），导出 6 秒，保存 18 秒。
+
 `ci/cache/snapshot.sh`（用 BuildStream venv 的 python 跑 `snapshot.py`）：
 
 ```bash
@@ -61,7 +71,7 @@ action 的 key 必须包含所有会影响 `.o` 的输入，否则会拿旧的�
 
 imagefs 时期在 x86_64 Wine 上量过（`imagefs/docs/WINE-RECC-CACHE.md`，有 CI 运行记录）：链接、`.spec.s` 汇编、configure 探测这些 recc 不缓存的调用加起来只占约 30 秒，缓存链接或汇编得不偿失。
 
-全部命中时 Wine 仍要约 15 分钟（OrbStack）。时间多半花在 recc 每次命中的固定开销上（先跑一遍预处理算依赖、哈希输入、查 casd，1.2 万次），其次是 make 本身和 configure；还没细拆。
+全部命中时 Wine 元素仍要 7 分钟（GitHub runner；OrbStack 上 15 分钟）。时间多半花在 recc 每次命中的固定开销上（先跑一遍预处理算依赖、哈希输入、查 casd，1.2 万次），其次是 make 本身和 configure；还没细拆。
 
 ## 构建日志里看命中
 
