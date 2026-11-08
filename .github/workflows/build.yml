@@ -27,6 +27,11 @@ on:
     - ".github/actions/setup-buildstream/**"
     - ".github/workflows/build.yml"
   workflow_dispatch:
+    inputs:
+      upload-cache:
+        description: Also upload the build cache as a workflow artifact (ci/cache/pull-ci.sh)
+        type: boolean
+        default: false
   # GitHub evicts a cache entry after 7 days without access. A no-change run
   # restores the snapshot (an access) and builds nothing.
   schedule:
@@ -133,6 +138,32 @@ jobs:
           while read -r id; do
             [ -n "$id" ] && gh api --method DELETE "repos/$GH_REPO/actions/caches/$id"
           done
+
+    # On request only (manual run with upload-cache, or "[upload-cache]" in the
+    # head commit message): the snapshot as a downloadable artifact, so a dev
+    # machine can import CI's build (ci/cache/pull-ci.sh). The Actions cache
+    # itself cannot be downloaded from outside a workflow.
+    - name: Pack build cache for download
+      id: pack
+      if: >-
+        steps.build.outcome == 'success' && (inputs.upload-cache ||
+        contains(github.event.head_commit.message, '[upload-cache]'))
+      run: |
+        if [ "${{ steps.export.outcome }}" != success ]; then
+          bash ci/cache/snapshot.sh export "$SNAPSHOT_DIR"
+        fi
+        dir="$(eval echo "$SNAPSHOT_DIR")"
+        echo "${{ steps.key.outputs.key }}" > "$dir/KEY"
+        tar -C "$dir" -cf - . | zstd -T0 -6 -q -o "$RUNNER_TEMP/bst-cache.tar.zst"
+        ls -l "$RUNNER_TEMP/bst-cache.tar.zst"
+
+    - if: steps.pack.outcome == 'success'
+      uses: actions/upload-artifact@v4
+      with:
+        name: bst-cache
+        path: ${{ runner.temp }}/bst-cache.tar.zst
+        compression-level: 0
+        retention-days: 7
 
     - uses: actions/upload-artifact@v4
       with:

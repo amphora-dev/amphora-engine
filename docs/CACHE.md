@@ -39,7 +39,7 @@ main 上没精确命中 → 构建后导出并保存新快照（构建失败也�
 - 构建失败的产物不进快照：BuildStream 也缓存失败的构建，带过去的话，同一个 key 重跑会直接报失败，不再重试。
 - “最近用过”看输出 `.o` 的 mtime：casd 每次读 CAS 里的 blob 都会更新它的 mtime，action cache 文件写入后就不再动。Wine 编译一次后，没被这次用到的旧结果排在后面，超出预算时先丢它们。
 - GitHub 每个仓库的 cache 上限 10 GB，7 天没被访问就淘汰。workflow 每周一、四定时跑一次：输入没变时精确命中、什么都不编，只为了让快照保持被访问。
-- 开发机读不到 Actions cache（GitHub 没有下载接口），用自己的本地缓存。
+- 开发机读不到 Actions cache（GitHub 没有下载接口）。要用 CI 的构建，就让 CI 把快照另外传成 workflow artifact（`bst-cache`，约 1 GB，保留 7 天），只在要的时候传：手动跑 `gh workflow run build.yml -f upload-cache=true`，或者提交信息里写 `[upload-cache]`。本地用 `bash ci/cache/pull-ci.sh` 下载并导入（Mac 上：`GH_TOKEN=$(gh auth token) orb -m bst-amd64 bash ci/cache/pull-ci.sh`）。输入和 CI 那次一样时 `runtime.bst` 直接是已缓存；不一样时，没变的编译命中 recc。
 
 实测（2026-11-08，ubuntu-24.04 runner）：
 
