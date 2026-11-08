@@ -40,57 +40,112 @@ TARGET="${TARGET_TRIPLE:?BuildStream must provide TARGET_TRIPLE}"
 NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
 HOST_PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-# --- recc (per-compile action cache through the sandbox remote-apis socket) ---
-# Active only when the element provides recc and the socket is there (also in
-# `bst shell --build`); otherwise every helper below is a no-op and the build is
-# a plain local build.
-RECC=""
-if command -v recc >/dev/null 2>&1 && [ -n "${RECC_SERVER:-}" ] && [ -S "${RECC_SERVER#unix:}" ]; then
-  RECC=recc
-  # PATH is part of every action's key, so the shims live at a fixed path, not
-  # under the build root (which differs between `bst build` and dev/wine.sh).
-  RECC_WRAP=/tmp/recc-wrap
-  export RECC_LOG_LEVEL=info RECC_LOG_DIRECTORY=/tmp/recc-logs
-  # Paths under the source tree enter action keys relative to it. The sandbox
-  # build root is /buildstream/<project>/<element>, so without this a renamed
-  # element or project (or another checkout location) misses every action.
-  export RECC_PROJECT_ROOT="$SRC"
-  mkdir -p "$RECC_LOG_DIRECTORY"
+# --- ccache --------------------------------------------------------------------
+# Every compile goes through ccache. A `bst build` sandbox starts empty, so the
+# cache directory travels through buildbox-casd: restored from CAS before the
+# build and stored back after it (ccache-cas, scripts/ccache-cas.py, over the
+# element's remote-apis socket), next to the element artifacts.
+#
+#   AMPHORA_CCACHE=sync     restore, build, store (default when the socket is there)
+#   AMPHORA_CCACHE=restore  restore, build (dev/wine.sh: a persistent CCACHE_DIR
+#                           that merges in what `bst build` stored)
+#   AMPHORA_CCACHE=local    no CAS (default without the socket)
+#   AMPHORA_CCACHE=off      no ccache
+export AMPHORA_CAS_SOCKET="${AMPHORA_CAS_SOCKET:-/tmp/reapi.sock}"
+CCACHE_MODE="${AMPHORA_CCACHE:-}"
+if [ -z "$CCACHE_MODE" ]; then
+  CCACHE_MODE=local
+  [ -S "$AMPHORA_CAS_SOCKET" ] && command -v ccache-cas >/dev/null 2>&1 && CCACHE_MODE=sync
 fi
+case "$CCACHE_MODE" in
+  sync|restore|local|off) ;;
+  *) echo "wine.sh: AMPHORA_CCACHE=$CCACHE_MODE is not sync, restore, local or off" >&2; exit 2 ;;
+esac
+command -v ccache >/dev/null 2>&1 || CCACHE_MODE=off
+# Name of the stored cache directory.
+CCACHE_NAME=wine
+# Compiler wrappers. The path ends up in the Makefiles and the configure
+# fingerprint, so it is fixed rather than under the build tree (which differs
+# between `bst build` and dev/wine.sh).
+CCACHE_WRAP=/tmp/ccache-wrap
+# Set by build() when the whole tree is compiled from scratch.
+CCACHE_FRESH=""
 
-recc_report() {
-  [ -n "$RECC" ] || return 0
-  python3 - "$RECC_LOG_DIRECTORY" <<'PY'
-import sys
-from pathlib import Path
-c = dict(hit=0, miss=0, updated=0, not_compiler=0)
-for p in Path(sys.argv[1]).rglob("*"):
-    if p.is_file():
-        t = p.read_text(errors="replace")
-        c["hit"] += t.count("Action Cache hit for [")
-        c["miss"] += t.count("Action not cached and running in cache-only mode")
-        c["updated"] += t.count("Action cache updated for [")
-        c["not_compiler"] += t.count("Not a compiler command")
-print("recc actions: " + " ".join(f"{k}={v}" for k, v in c.items()))
-PY
+# ccache_wrap NAME COMPILER [FILE...]: $CCACHE_WRAP/NAME runs COMPILER through
+# ccache. BuildStream stages every file with the same mtime, so ccache's default
+# compiler check (mtime and size) cannot tell two builds of a compiler apart;
+# each wrapper identifies its compiler by the content of the binary and of the
+# FILEs that also decide the output (gcc's cc1 and as, clang config files).
+ccache_wrap() {
+  local name="$1" id
+  id="$(sha256sum "${@:2}" | sha256sum | cut -c1-32)"
+  printf '#!/bin/sh\nCCACHE_COMPILERCHECK=string:%s exec ccache %s "$@"\n' "$id" "$2" > "$CCACHE_WRAP/$name"
+  chmod +x "$CCACHE_WRAP/$name"
 }
 
-# recc does not hash the compiler binary; put the hashes of every wrapped
-# compiler in a platform property so a toolchain update cannot replay objects.
-recc_setup() {
-  [ -n "$RECC" ] || return 0
-  local -a cc=(/usr/bin/gcc /usr/bin/g++ "$NDK_BIN/clang" "$NDK_BIN/clang++"
-               "$LLVM_MINGW_ROOT/bin/clang" "$LLVM_MINGW_ROOT/bin/clang++")
-  RECC_REMOTE_PLATFORM_toolchain="$(sha256sum "${cc[@]}" | sha256sum | cut -d' ' -f1)"
-  export RECC_REMOTE_PLATFORM_toolchain
-  # Wine's PE side runs bare `clang` from PATH; shim only llvm-mingw's.
-  mkdir -p "$RECC_WRAP"
-  local n
-  for n in clang clang++; do
-    printf '#!/bin/sh\nexec recc %q "$@"\n' "$LLVM_MINGW_ROOT/bin/$n" > "$RECC_WRAP/$n"
-    chmod +x "$RECC_WRAP/$n"
-  done
-  echo "wine.sh: recc on (toolchain $RECC_REMOTE_PLATFORM_toolchain)" >&2
+ccache_start() {
+  [ "$CCACHE_MODE" != off ] || return 0
+  export CCACHE_DIR="${CCACHE_DIR:-/tmp/ccache}"
+  # Absolute paths under the source tree are hashed relative to the working
+  # directory, so `bst build` (/buildstream/<project>/<element>) and dev/wine.sh
+  # (/src) share results. Target compiles pass -fdebug-compilation-dir=., which
+  # keeps the directory out of the hash already; the host tools are not
+  # shipped, so their debug info may name another directory.
+  export CCACHE_BASEDIR="$SRC" CCACHE_NOHASHDIR=1
+  mkdir -p "$CCACHE_WRAP" "$CCACHE_DIR"
+  ccache_wrap gcc /usr/bin/gcc "$(gcc -print-prog-name=cc1)" "$(command -v "$(gcc -print-prog-name=as)")"
+  ccache_wrap g++ /usr/bin/g++ "$(g++ -print-prog-name=cc1plus)" "$(command -v "$(g++ -print-prog-name=as)")"
+  ccache_wrap android-clang "$NDK_BIN/clang"
+  ccache_wrap android-clang++ "$NDK_BIN/clang++"
+  # Wine runs llvm-mingw's compiler as plain `clang` from PATH, which loads the
+  # <triple>.cfg next to it.
+  local -a cfg
+  mapfile -t cfg < <(find "$LLVM_MINGW_ROOT/bin" -maxdepth 1 -name '*.cfg' | sort)
+  ccache_wrap clang "$LLVM_MINGW_ROOT/bin/clang" "${cfg[@]}"
+  ccache_wrap clang++ "$LLVM_MINGW_ROOT/bin/clang++" "${cfg[@]}"
+  case "$CCACHE_MODE" in
+    sync|restore) ccache-cas restore "$CCACHE_DIR" "$CCACHE_NAME" ;;
+  esac
+  # Recount after a merge and keep within max_size, then count this build only.
+  ccache --cleanup >/dev/null
+  ccache --zero-stats >/dev/null
+  CCACHE_T0=$SECONDS
+  echo "wine.sh: ccache $CCACHE_MODE, $CCACHE_DIR, $(ccache_stat files_in_cache) files"
+}
+
+ccache_stat() {
+  ccache --print-stats | awk -F'\t' -v k="$1" '$1 == k { print $2; found = 1 } END { if (!found) print 0 }'
+}
+
+# Report; in sync mode, store the cache when this build compiled something new.
+# After a successful build of a fresh tree, entries the build did not use belong
+# to older sources: they are evicted first, so the stored cache stays the size
+# of one Wine build. A build with no misses is not stored: what it would add
+# are direct-mode manifests for compiles of randomly named temporary files
+# (winebuild), which only ever hit in preprocessed mode, and the stored copy
+# already holds every result. Runs on exit, also after a failed build (its
+# compile results are still good). Never fails.
+ccache_finish() {
+  local status="$1" hit direct miss files evicted=0
+  [ "$CCACHE_MODE" != off ] || return 0
+  direct="$(ccache_stat direct_cache_hit)"
+  hit=$((direct + $(ccache_stat preprocessed_cache_hit)))
+  miss="$(ccache_stat cache_miss)"
+  if [ "$CCACHE_MODE" = sync ] && [ "$status" = 0 ] && [ -n "$CCACHE_FRESH" ]; then
+    files="$(ccache_stat files_in_cache)"
+    ccache --evict-older-than "$((SECONDS - CCACHE_T0 + 60))s" >/dev/null
+    evicted=$((files - $(ccache_stat files_in_cache)))
+  fi
+  ccache --show-stats
+  printf 'ccache stats: hit=%s (direct %s) miss=%s evicted=%s, %s files, %s MiB\n' \
+    "$hit" "$direct" "$miss" "$evicted" "$(ccache_stat files_in_cache)" "$(($(ccache_stat cache_size_kibibyte) / 1024))"
+  if [ "$CCACHE_MODE" = sync ]; then
+    if [ "$miss" -gt 0 ]; then
+      ccache-cas save "$CCACHE_DIR" "$CCACHE_NAME"
+    else
+      echo "ccache-cas: no new compile results; the stored cache is kept"
+    fi
+  fi
 }
 
 # shellcheck disable=SC2054 # --enable-archs takes a comma separated list
@@ -120,11 +175,14 @@ configure_flags=(
 )
 
 target_env() {
-  export PATH="${RECC:+$RECC_WRAP:}$LLVM_MINGW_ROOT/bin:$NDK_BIN:$HOST_PATH"
-  # --target goes into CC itself: Wine links with $(CC) $(LDFLAGS), without $(CFLAGS).
-  # recc recognises compilers by basename, so call clang, not the NDK wrapper.
-  export CC="${RECC:+recc }$NDK_BIN/clang --target=$TARGET"
-  export CXX="${RECC:+recc }$NDK_BIN/clang++ --target=$TARGET"
+  local wrap="" cc="$NDK_BIN/clang" cxx="$NDK_BIN/clang++"
+  if [ "$CCACHE_MODE" != off ]; then
+    wrap="$CCACHE_WRAP:" cc="$CCACHE_WRAP/android-clang" cxx="$CCACHE_WRAP/android-clang++"
+  fi
+  export PATH="$wrap$LLVM_MINGW_ROOT/bin:$NDK_BIN:$HOST_PATH"
+  # --target goes into CC itself: Wine links with $(CC) $(LDFLAGS), without
+  # $(CFLAGS). Plain clang, not the NDK's <triple>-clang wrapper script.
+  export CC="$cc --target=$TARGET" CXX="$cxx --target=$TARGET"
   export AR="$NDK_BIN/llvm-ar" RANLIB="$NDK_BIN/llvm-ranlib" STRIP="$NDK_BIN/llvm-strip"
   export DLLTOOL="$LLVM_MINGW_ROOT/bin/llvm-dlltool"
   # Wine's configure only looks for $host-pkg-config when cross compiling;
@@ -140,8 +198,10 @@ target_env() {
 }
 
 host_env() {
-  export PATH="$HOST_PATH"
-  export CC="${RECC:+recc }/usr/bin/gcc" CXX="${RECC:+recc }/usr/bin/g++"
+  export PATH="$HOST_PATH" CC=/usr/bin/gcc CXX=/usr/bin/g++
+  if [ "$CCACHE_MODE" != off ]; then
+    export CC="$CCACHE_WRAP/gcc" CXX="$CCACHE_WRAP/g++"
+  fi
   unset AR RANLIB STRIP DLLTOOL CFLAGS CROSSCFLAGS LDFLAGS PKG_CONFIG PKG_CONFIG_SYSROOT_DIR
   export PKG_CONFIG_PATH='' PKG_CONFIG_LIBDIR="$HOST_FREETYPE/lib/pkgconfig"
   export LD_LIBRARY_PATH="$HOST_FREETYPE/lib"
@@ -223,8 +283,8 @@ configure_all() {
 
 build() {
   mkdir -p "$OUT"
-  recc_setup
-  trap 'recc_report || true' EXIT
+  ccache_start
+  trap 'status=$?; ccache_finish "$status" || true; exit "$status"' EXIT
   generate
   local want have=""
   want="$(configure_fingerprint)"
@@ -232,6 +292,7 @@ build() {
   if [ "$want" != "$have" ] || [ ! -f "$BUILD/Makefile" ] || [ ! -f "$TOOLS/Makefile" ]; then
     echo "wine.sh: configuring (fingerprint $want)"
     configure_all
+    CCACHE_FRESH=1
     echo "$want" > "$OUT/configure.sha256"
   else
     echo "wine.sh: configure inputs unchanged, building incrementally"

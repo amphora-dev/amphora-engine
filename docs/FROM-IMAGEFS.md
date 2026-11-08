@@ -16,7 +16,7 @@
 | `engine/wine.bst`、`engine/wine-script.bst`、`ci/engine/wine.sh` | `wine/wine.bst`、`wine/script.bst`、`scripts/wine.sh` | 只改路径（后来从 `ci/` 挪到 `scripts/`） |
 | `engine/runtime.bst`、`ci/engine/runtime.sh` | `runtime.bst`、`scripts/runtime.sh` | 加了所有 ELF 的 16 KB 对齐检查 |
 | `engine/freetype.bst` | `libs/freetype.bst` | meson profile 从 android26 改成 android30（SDK 新增 `meson-aarch64-android30.ini`） |
-| `wine/host-freetype.bst`、`tools/recc.bst` | 同名 | 无 |
+| `wine/host-freetype.bst`、`tools/recc.bst` | `wine/host-freetype.bst` 同名；recc 后来换成 `tools/ccache.bst` | recc 的命中开销太大，见 `docs/CACHE.md` |
 | `ci/setup/*`、`ci/lint/check-bst-inline-sh.py`、`.github/actions/setup-buildstream` | 同名 | 工具目录改为 `~/.cache/amphora-buildstream/tools` |
 | —（imagefs 里只有注释提到） | `ci/lint/check-pins.py` | 新写：Wine commit、API 水位两处一致 |
 

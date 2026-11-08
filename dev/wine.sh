@@ -6,10 +6,11 @@
 # `make install` over the whole tree, and commits the result back to CAS. That
 # is minutes even when one .c file changed. This script keeps the same inputs
 # (the element's sandbox: SDK, NDK, llvm-mingw, staged libraries, scripts/wine.sh)
-# but keeps the source copy and build tree on local disk between runs. recc
-# uses the same local action cache as `bst build`, and the tree is laid out the
-# same way (build tree at <source>/_amphora), so the first build here reuses
-# compile results from the last `bst build` and the other way round:
+# but keeps the source copy, build tree and ccache directory on local disk
+# between runs. Before each build, the ccache directory that the last
+# `bst build` stored in BuildStream's cache is merged in (once per stored
+# version), and the tree is laid out the same way (build tree at
+# <source>/_amphora), so the first build here reuses its compile results:
 #
 #   dev/wine.sh build      sync $WINE_SRC into the copy, then scripts/wine.sh build
 #   dev/wine.sh changed    built files newer than the last `mark`, as runtime paths
@@ -18,10 +19,18 @@
 # Not a release path: nothing here is cached or reproducible. Anything that
 # leaves this machine is built with `./bst build runtime.bst`.
 #
+# With the checkout on the Mac and this script in the OrbStack VM, an edit
+# saved in the last second or two may not be visible to the VM yet (its file
+# sharing caches attributes of files it has read); such an edit is built by
+# the next run.
+#
 # Environment:
 #   WINE_SRC          Wine checkout to build (default: ../wine-arm64ec next to this repo)
 #   AMPHORA_DEV_DIR   state directory on a local Linux filesystem
 #                     (default: ~/.cache/amphora-dev/wine)
+#   AMPHORA_CCACHE    restore (default): merge in what `bst build` stored;
+#                     local: ccache without that; off: no ccache
+#                     (scripts/wine.sh; results from here never go back)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -29,41 +38,46 @@ WINE_SRC="${WINE_SRC:-$(cd "$ROOT/.." && pwd)/wine-arm64ec}"
 STATE="${AMPHORA_DEV_DIR:-$HOME/.cache/amphora-dev/wine}"
 SRC="$STATE/src"
 BUILD="$STATE/build"
+CCACHE="$STATE/ccache"
 # Files the build writes into its source copy (autoreconf, make_requests,
 # make_specfiles, make_vulkan). Syncing must neither revert nor delete them,
 # or every incremental build would regenerate them and rebuild most of Wine.
 GENERATED="$STATE/generated.list"
+# Touched after each sync; what the build writes into the copy is newer.
+STAMP="$STATE/build.stamp"
 
 sync_src() {
   test -f "$WINE_SRC/configure.ac" || { echo "WINE_SRC=$WINE_SRC is not a Wine tree" >&2; exit 1; }
-  mkdir -p "$SRC" "$BUILD"
+  mkdir -p "$SRC" "$BUILD" "$CCACHE"
   touch "$GENERATED"
   rsync -a --delete --exclude=/.git --exclude=/_amphora --exclude-from="$GENERATED" "$WINE_SRC/" "$SRC/"
 }
 
-# After a build, whatever differs between the checkout and the copy (outside
-# the known list) was written by the build: remember it. rsync pads the name
-# after "*deleting" with spaces, hence the " *".
+# After a build, files in the copy that are newer than the build's start were
+# written by the build (rsync keeps the checkout's mtimes): remember them.
+# Files edited in the checkout while the build ran are not in the copy yet and
+# are synced next time.
 record_generated() {
-  rsync -a --delete --dry-run --itemize-changes --exclude=/.git --exclude=/_amphora --exclude-from="$GENERATED" \
-      "$WINE_SRC/" "$SRC/" |
-    sed -n -e 's#^\*deleting  *\(.*[^/]\)$#/\1#p' -e 's#^>f[^ ]* \(.*\)$#/\1#p' >> "$GENERATED"
+  ( cd "$SRC" && find . -path ./_amphora -prune -o -type f -newer "$STAMP" -print ) |
+    sed 's#^\.##' >> "$GENERATED"
   sort -u -o "$GENERATED" "$GENERATED"
 }
 
 build() {
   sync_src
+  touch "$STAMP"
   local start=$SECONDS
   # The element's own build sandbox; scripts/ is mounted from this checkout so an
   # edited scripts/wine.sh is used without rebuilding wine/script.bst. Its build
   # dependencies must be cached (any earlier `./bst build runtime.bst`).
   # The build tree goes where `bst build` has it (wine.sh's default
-  # $SRC/_amphora): action keys hold paths relative to the source tree.
-  # RECC_USE_LOCALCAS is off because it has casd read input files by path, and
-  # casd cannot see into these mounts; recc then sends the files itself.
+  # $SRC/_amphora), so compile command lines are the same.
+  local mode
+  mode="$(printf %q "${AMPHORA_CCACHE:-restore}")"
   "$ROOT/bst" shell --build wine/wine.bst \
-    --mount "$SRC" /src --mount "$BUILD" /src/_amphora --mount "$ROOT/scripts" /dev-scripts \
-    -- bash -c 'unset RECC_USE_LOCALCAS && cd /src && bash /dev-scripts/wine.sh build'
+    --mount "$SRC" /src --mount "$BUILD" /src/_amphora --mount "$CCACHE" /ccache \
+    --mount "$ROOT/scripts" /dev-scripts \
+    -- bash -c "cd /src && CCACHE_DIR=/ccache AMPHORA_CCACHE=$mode bash /dev-scripts/wine.sh build"
   record_generated
   echo "dev/wine.sh: built in $((SECONDS - start)) s ($(wc -l < "$GENERATED") generated files kept)"
 }

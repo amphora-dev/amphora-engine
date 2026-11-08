@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Import the build cache of a CI run into the local BuildStream cache: element
-# artifacts at that run's keys and its recc compile results. CI uploads it only
-# on request:
+# artifacts at that run's keys and its stored ccache directory (which replaces
+# this machine's). CI uploads it only on request:
 #
 #   gh workflow run build.yml -f upload-cache=true     # or "[upload-cache]" in a commit message
 #   bash ci/cache/pull-ci.sh [RUN_ID]                  # default: newest run that has it
@@ -45,5 +45,5 @@ local_key="bst-v3-$("$here/../../bst" --no-colors show --deps none --format '%{f
 if [ "$ci_key" = "$local_key" ]; then
   echo "pull-ci: same inputs as this checkout; runtime.bst is cached" >&2
 else
-  echo "pull-ci: CI built other inputs ($ci_key); unchanged compiles will hit recc" >&2
+  echo "pull-ci: CI built other inputs ($ci_key); Wine compiles that did not change will hit ccache" >&2
 fi

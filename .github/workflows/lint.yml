@@ -21,6 +21,9 @@ jobs:
       - name: bash -n
         run: find . -name '*.sh' -not -path './.git/*' -print0 | xargs -0 -n1 bash -n
 
+      - name: python compiles
+        run: find . -name '*.py' -not -path './.git/*' -print0 | xargs -0 python3 -m py_compile
+
       - name: executable bit on entrypoints
         run: test -x bst
 

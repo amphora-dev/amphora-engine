@@ -68,7 +68,7 @@ jobs:
       run: echo "key=${SNAPSHOT_PREFIX}$(./bst --no-colors show --deps none --format '%{full-key}' runtime.bst)" >> "$GITHUB_OUTPUT"
 
     # Snapshots come from main (PRs and branches can read them). Only this
-    # project's artifacts and recc results; the SDK is refetched when needed.
+    # project's artifacts and the stored ccache; the SDK is refetched when needed.
     - name: Restore snapshot
       id: restore
       uses: actions/cache/restore@v4
@@ -84,15 +84,13 @@ jobs:
     - name: Build
       id: build
       run: |
-        echo "BUILD_START=$(date +%s)" >> "$GITHUB_ENV"
         ./bst build runtime.bst
         summary="$(find ~/.cache/buildstream/logs -type f -path '*wine-wine*build*.log' -print0 |
-          xargs -0 -r grep -h 'recc actions:' | tail -n 1 || true)"
+          xargs -0 -r grep -h -e 'ccache stats:' -e 'ccache-cas:' || true)"
         if [ -n "$summary" ]; then
-          # Logs are not in the snapshot: a Wine build log means Wine was built in this run.
-          echo "WINE_BUILT=1" >> "$GITHUB_ENV"
-          echo "::notice::$summary"
-          echo "$summary" >> "$GITHUB_STEP_SUMMARY"
+          # Logs are not in the snapshot: these lines are from this run's Wine build.
+          echo "$summary" | sed 's/^/::notice::/'
+          { echo '```text'; echo "$summary"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
         fi
         rm -rf out
         ./bst artifact checkout runtime.bst --directory out/runtime
@@ -102,9 +100,9 @@ jobs:
         # nothing is deleted up front (that took 50 s). Watch the peak here.
         df -h / | tail -n 1 | awk '{print "disk after build: " $3 " used, " $4 " free"}' | tee -a "$GITHUB_STEP_SUMMARY"
 
-    # Also after a failed build: compile results from a Wine build that broke
-    # halfway are still valid. Such a snapshot gets a -failed suffix, so the
-    # exact key stays free for the next successful run.
+    # Also after a failed build: scripts/wine.sh stores the ccache directory of
+    # a Wine build that broke halfway too. Such a snapshot gets a -failed
+    # suffix, so the exact key stays free for the next successful run.
     - name: Export snapshot
       id: export
       if: >-
@@ -112,14 +110,10 @@ jobs:
         steps.restore.outputs.cache-hit != 'true' && steps.build.outcome != 'skipped'
       run: |
         key="${{ steps.key.outputs.key }}"
-        since=()
         if [ "${{ steps.build.outcome }}" != success ]; then
           key="$key-failed-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-        elif [ "${WINE_BUILT:-}" = 1 ]; then
-          # A successful Wine build used every recc entry that is still live.
-          since=(--used-since "$BUILD_START")
         fi
-        bash ci/cache/snapshot.sh export "$SNAPSHOT_DIR" "${since[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+        bash ci/cache/snapshot.sh export "$SNAPSHOT_DIR" | tee -a "$GITHUB_STEP_SUMMARY"
         echo "key=$key" >> "$GITHUB_OUTPUT"
 
     - name: Save snapshot

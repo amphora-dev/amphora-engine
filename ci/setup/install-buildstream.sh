@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install pinned BuildStream on the host. BuildBox (casd, fuse, run) comes
 # bundled in the BuildStream wheel (2.8.1: buildbox 1.4.25), so the three
-# always match. recc runs inside the sandbox and comes from elements/tools/recc.bst.
+# always match. ccache runs inside the sandbox and comes from elements/tools/ccache.bst.
 set -euo pipefail
 
 BST_VERSION="${BST_VERSION:-2.8.1}"

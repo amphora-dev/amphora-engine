@@ -21,7 +21,7 @@ runtime.bst                 打包、strip、校验、写 manifest（scripts/run
 │   ├── wine/script.bst     scripts/wine.sh（单独成元素）
 │   ├── wine/host-freetype  构建期工具 sfnt2fon 用的宿主 FreeType
 │   ├── libs/freetype.bst   目标 FreeType（Wine 只链它）
-│   └── tools/recc.bst      单次编译缓存（docs/CACHE.md）
+│   └── tools/ccache.bst    ccache 和 ccache-cas：单次编译缓存（docs/CACHE.md）
 ├── libs/freetype.bst
 └── sdk/toolchain.bst       stack：宿主 SDK + NDK r29 + llvm-mingw（换版本只改这里）
 buildstream-sdk.bst         junction：上面三样和 meson profile
@@ -62,14 +62,14 @@ dev/wine.sh mark      # 记下时间点
 dev/wine.sh changed   # 列出之后变了的、要推到设备上的文件
 ```
 
-它把 `WINE_SRC` 同步到 `~/.cache/amphora-dev/wine/src`，构建树在旁边的 `build/`，编译命中和 CI 一样的 recc 缓存。第一次约 15 分钟（几乎全部命中 recc），之后改一个 `.c` 约 12 秒。要先 `./bst build runtime.bst` 一次（或 `ci/cache/pull-ci.sh`），让 wine.bst 的构建依赖都在缓存里。
+它把 `WINE_SRC` 同步到 `~/.cache/amphora-dev/wine/src`，构建树在旁边的 `build/`，ccache 目录在 `ccache/`；每次构建前先并入最近一次 `bst build` 存下的 ccache（同一份只并一次），所以第一次也几乎全部命中。之后改一个 `.c` 约 10 秒。要先 `./bst build runtime.bst` 一次（或 `ci/cache/pull-ci.sh`），让 wine.bst 的构建依赖都在缓存里。
 
 ## 缓存
 
-都在 BuildStream 的本地缓存里：元素产物、单次编译（recc，经沙箱里的 `remote-apis-socket` 进 action cache）。没有远程缓存服务器。CI 把本项目的元素产物和 recc 结果存成 GitHub Actions cache 快照，下一次运行导入；SDK 不进快照，要用时重新下载。细节和数字见 [`docs/CACHE.md`](docs/CACHE.md)。
+都在 BuildStream 的本地缓存里：元素产物，和 Wine 的 ccache 目录（整个目录打成一个 tar，经沙箱里的 `remote-apis-socket` 存进 CAS）。没有远程缓存服务器。CI 把本项目的元素产物和这份 ccache 存成 GitHub Actions cache 快照，下一次运行导入；SDK 不进快照，要用时重新下载。细节和数字见 [`docs/CACHE.md`](docs/CACHE.md)。
 
 ## 约定
 
 - 元素里的 `*-commands` 由 `sh -c -e` 跑，SDK 的 `/bin/sh` 是 dash：inline 只写 POSIX sh，长逻辑放 `scripts/*.sh`（沙箱里跑的构建脚本；`ci/` 只放宿主上跑的 CI 工具）。`ci/lint/check-bst-inline-sh.py` 检查。
 - API 水位只在 `project.conf` 的 `target-triple` 写一次，Wine 和 manifest 的 minSdk 都从它来；Wine commit 写在两处（BuildStream 不保留 `.git`），由 `ci/lint/check-pins.py` 对齐。
-- 不在 BuildStream 外维护平行的构建配方、共享 staging 或完成标记；ccache 这类沙箱外缓存也不用，单次编译缓存走 recc + CAS。
+- 不在 BuildStream 外维护平行的构建配方、共享 staging 或完成标记。ccache 只在沙箱里用，它的目录也存在 BuildStream 的 CAS 里，不挂沙箱外的目录（`dev/wine.sh` 除外，它本来就不是发布路径）。

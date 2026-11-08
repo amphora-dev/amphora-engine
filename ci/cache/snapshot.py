@@ -6,14 +6,14 @@ what is expensive to recreate:
 
   - the artifacts of this project's own elements in the target's dependency
     graph (Wine, its libraries, the runtime archive), at their current keys;
-  - recc's action cache: compile results and the blobs they name, most
-    recently used first, up to a size budget.
+  - the stored ccache directories (scripts/ccache-cas.py): one tar each, named
+    by an action cache entry.
 
 SDK artifacts from the buildstream-sdk junction (host SDK, NDK, llvm-mingw)
 are left out: BuildStream refetches their pinned sources and rebuilds them
 when an element that needs them has to build. See docs/CACHE.md.
 
-  snapshot.py export DIR [--target ELEMENT] [--recc-budget GiB] [--used-since EPOCH]
+  snapshot.py export DIR [--target ELEMENT]
   snapshot.py import DIR
 
 Run with the BuildStream venv's python (ci/cache/snapshot.sh); it provides the
@@ -32,7 +32,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from google.protobuf.message import Message
+from google.protobuf.message import DecodeError, Message
 
 from buildstream._protos.build.bazel.remote.execution.v2 import remote_execution_pb2 as re_pb2
 from buildstream._protos.buildstream.v2 import artifact_pb2
@@ -51,14 +51,18 @@ def obj(root: Path, h: str) -> Path:
     return root / h[:2] / h[2:]
 
 
-def link(src: Path, dst: Path) -> bool:
-    if dst.exists():
+def link(src: Path, dst: Path, replace: bool = False) -> bool:
+    """Hard link (or copy) src to dst. An existing dst is kept, or with
+    `replace` atomically replaced when its content differs."""
+    if dst.exists() and (not replace or dst.read_bytes() == src.read_bytes()):
         return False
     dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst.with_name(f".{dst.name}.{os.getpid()}")
     try:
-        os.link(src, dst)
+        os.link(src, tmp)
     except OSError:
-        shutil.copy2(src, dst)
+        shutil.copy2(src, tmp)
+    os.replace(tmp, dst)
     return True
 
 
@@ -161,82 +165,61 @@ def export_artifacts(dest: Path, target: str, seen: dict[str, int]) -> tuple[int
     return kept, missing
 
 
-# --- recc action cache ---------------------------------------------------------
+# --- ccache (scripts/ccache-cas.py) ----------------------------------------------
+
+CCACHE_TAR = "ccache.tar"
 
 
-def recc_entries(ac: Path = AC):
-    if not ac.is_dir():
+def ccache_entries():
+    """(action hash, ActionResult) for the entries ccache-cas wrote: a single
+    output file named ccache.tar. Anything else in the action cache (such as
+    leftovers of older tools) stays out of the snapshot."""
+    if not AC.is_dir():
         return
-    for sub in sorted(ac.iterdir()):
-        for f in sub.iterdir():
+    for sub in sorted(AC.iterdir()):
+        for f in sorted(sub.iterdir()):
             r = re_pb2.ActionResult()
-            r.ParseFromString(f.read_bytes())
-            yield sub.name + f.name, r
+            try:
+                r.ParseFromString(f.read_bytes())
+            except DecodeError:
+                continue
+            if [o.path for o in r.output_files] == [CCACHE_TAR] and not r.output_directories:
+                yield sub.name + f.name, r
 
 
-def recc_blobs(action: str, r: re_pb2.ActionResult) -> list[tuple[str, int]]:
-    """The Action, its outputs and stdout/stderr."""
-    out = [(action, obj(CAS, action).stat().st_size)]
-    out += [(o.digest.hash, o.digest.size_bytes) for o in r.output_files]
-    for d in (r.stdout_digest, r.stderr_digest):
-        if d.hash and d.hash != EMPTY:
-            out.append((d.hash, d.size_bytes))
-    if r.output_directories:
-        raise SystemExit(f"{action}: output directories are not handled (recc only writes files)")
-    return out
-
-
-def last_used(action: str, bl: list[tuple[str, int]]) -> float:
-    """When recc last hit or wrote this entry. casd never touches an action
-    cache file after writing it, but it bumps a CAS blob's mtime on every read
-    (FsLocalCas::hasBlob), and a hit reads the outputs. Raises
-    FileNotFoundError if any blob is gone."""
-    times = [obj(CAS, h).stat().st_mtime for h, _ in bl]
-    return max(times[1:] + [obj(AC, action).stat().st_mtime])  # [0] is the Action
-
-
-def export_recc(dest: Path, budget: float, seen: dict[str, int], since: float | None) -> tuple[int, int, int]:
-    """Most recently used entries first until `budget` GiB of new blobs.
-
-    With `since` (the start of a successful build that compiled Wine): that
-    build hit or wrote every entry the current sources use, so entries not used
-    since then are dead and are dropped."""
-    found = []
-    for action, r in recc_entries():
-        try:
-            bl = recc_blobs(action, r)
-            found.append((last_used(action, bl), action, bl))
-        except FileNotFoundError:
-            continue  # casd expired a blob; the entry is a miss anyway
-    if since is not None:
-        used = [f for f in found if f[0] >= since]
-        if used:
-            found = used
-        else:
-            # A Wine build always touches the outputs it hits; none touched
-            # means the mtime signal is broken, so keep everything.
-            print("::warning::snapshot: no recc entry used since --used-since; keeping all")
-    found.sort(reverse=True)
-    limit = budget * 2**30
-    total = kept = 0
-    for _, action, bl in found:
-        size = sum(s for h, s in bl if h not in seen)
-        if total + size > limit:
-            break
-        for h, s in bl:
-            if h not in seen:
-                seen[h] = s
-                link(obj(CAS, h), obj(dest / "cas", h))
+def export_ccache(dest: Path, seen: dict[str, int]) -> list[str]:
+    """Each entry with its tar, Action and Command; entries whose tar casd has
+    expired are skipped. Returns "name size" descriptions."""
+    out = []
+    for action, r in ccache_entries():
+        tar = r.output_files[0].digest
+        if not obj(CAS, tar.hash).exists():
+            continue
+        blobs = {tar.hash: tar.size_bytes}
+        name = action[:12]
+        p = obj(CAS, action)
+        if p.exists():
+            blobs[action] = p.stat().st_size
+            a = re_pb2.Action()
+            a.ParseFromString(p.read_bytes())
+            c = obj(CAS, a.command_digest.hash)
+            if c.exists():
+                blobs[a.command_digest.hash] = a.command_digest.size_bytes
+                cmd = re_pb2.Command()
+                cmd.ParseFromString(c.read_bytes())
+                name = " ".join(cmd.arguments[1:]) or name
+        for h, size in blobs.items():
+            link(obj(CAS, h), obj(dest / "cas", h))
+            seen[h] = size
         link(obj(AC, action), obj(dest / "ac", action))
-        total += size
-        kept += 1
-    return kept, len(found), total
+        out.append(f"{name} {tar.size_bytes / 2**30:.2f} GiB")
+    return out
 
 
 # --- commands ------------------------------------------------------------------
 
 
-def export(dest: Path, target: str, budget: float, since: float | None) -> None:
+def export(dest: Path, target: str) -> None:
     if dest.exists():
         shutil.rmtree(dest)
     dest.mkdir(parents=True)
@@ -247,12 +230,11 @@ def export(dest: Path, target: str, budget: float, since: float | None) -> None:
         # changed the ref layout or the Artifact proto this script reads.
         print("::warning::snapshot: no element artifacts exported; check ci/cache/snapshot.py against this BuildStream")
     art_size = sum(seen.values())
-    recc, recc_all, recc_size = export_recc(dest, budget, seen, since)
+    caches = export_ccache(dest, seen)
     print(
         f"snapshot: {arts} artifacts ({art_size / 2**30:.2f} GiB"
         + (f", {art_missing} not cached" if art_missing else "")
-        + f"), recc {recc}/{recc_all} entries ({recc_size / 2**30:.2f} GiB), "
-        f"{len(seen)} blobs -> {dest}"
+        + f"), ccache: {', '.join(caches) or 'none'}; {len(seen)} blobs -> {dest}"
     )
 
 
@@ -261,12 +243,15 @@ def import_(src: Path) -> None:
         print(f"snapshot: nothing at {src}")
         return
     n = 0
-    for root, dst in ((src / "cas", CAS), (src / "ac", AC)):
+    # Action cache entries name the stored ccache directories; the snapshot's
+    # replace this machine's, so a dev machine that pulls a CI run
+    # (ci/cache/pull-ci.sh) builds with CI's compile results.
+    for root, dst, replace in ((src / "cas", CAS, False), (src / "ac", AC, True)):
         if not root.is_dir():
             continue
         for sub in root.iterdir():
             for f in sub.iterdir():
-                n += link(f, dst / sub.name / f.name)
+                n += link(f, dst / sub.name / f.name, replace)
     refs = 0
     if (src / "refs").is_dir():
         for f in (src / "refs").rglob("*"):
@@ -284,13 +269,11 @@ def main() -> int:
     e = sub.add_parser("export")
     e.add_argument("dir", type=lambda v: Path(v).expanduser())
     e.add_argument("--target", default="runtime.bst")
-    e.add_argument("--recc-budget", type=float, default=4.0, help="GiB of recc blobs to keep (default 4)")
-    e.add_argument("--used-since", type=float, help="start of a successful Wine build; drop recc entries it did not use")
     i = sub.add_parser("import")
     i.add_argument("dir", type=lambda v: Path(v).expanduser())
     a = p.parse_args()
     if a.cmd == "export":
-        export(a.dir, a.target, a.recc_budget, a.used_since)
+        export(a.dir, a.target)
     else:
         import_(a.dir)
     return 0
