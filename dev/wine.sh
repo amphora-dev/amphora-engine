@@ -42,11 +42,12 @@ sync_src() {
 }
 
 # After a build, whatever differs between the checkout and the copy (outside
-# the known list) was written by the build: remember it.
+# the known list) was written by the build: remember it. rsync pads the name
+# after "*deleting" with spaces, hence the " *".
 record_generated() {
   rsync -a --delete --dry-run --itemize-changes --exclude=/.git --exclude=/_amphora --exclude-from="$GENERATED" \
       "$WINE_SRC/" "$SRC/" |
-    sed -n -e 's#^\*deleting \(.*[^/]\)$#/\1#p' -e 's#^>f[^ ]* \(.*\)$#/\1#p' >> "$GENERATED"
+    sed -n -e 's#^\*deleting  *\(.*[^/]\)$#/\1#p' -e 's#^>f[^ ]* \(.*\)$#/\1#p' >> "$GENERATED"
   sort -u -o "$GENERATED" "$GENERATED"
 }
 

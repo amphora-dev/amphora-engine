@@ -209,7 +209,13 @@ def export_recc(dest: Path, budget: float, seen: dict[str, int], since: float | 
         except FileNotFoundError:
             continue  # casd expired a blob; the entry is a miss anyway
     if since is not None:
-        found = [f for f in found if f[0] >= since]
+        used = [f for f in found if f[0] >= since]
+        if used:
+            found = used
+        else:
+            # A Wine build always touches the outputs it hits; none touched
+            # means the mtime signal is broken, so keep everything.
+            print("::warning::snapshot: no recc entry used since --used-since; keeping all")
     found.sort(reverse=True)
     limit = budget * 2**30
     total = kept = 0
