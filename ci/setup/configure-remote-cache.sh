@@ -12,6 +12,9 @@ set -euo pipefail
 url="${BST_REMOTE_CACHE_URL:-https://cas.arm.512.pub}"
 token="${BST_REMOTE_CACHE_TOKEN:-}"
 action_cache_mode="${BST_ACTION_CACHE_MODE:-remote}"
+# false on dev machines: pull everything, upload nothing during builds
+# (a 2 GB Wine artifact takes ~15 min over a slow uplink). CI pushes.
+push="${BST_REMOTE_CACHE_PUSH:-true}"
 conf_dir="${XDG_CONFIG_HOME:-$HOME/.config}"
 conf="$conf_dir/buildstream.conf"
 token_file="$conf_dir/bst-remote-cache.token"
@@ -57,19 +60,20 @@ mkdir -p "$conf_dir"
 # Only these keys are touched; mirrors, scheduler and other settings in an
 # existing buildstream.conf are kept.
 python="${BST_TOOLS_ROOT:-$HOME/.cache/amphora-buildstream/tools}/venv/bin/python"
-"$python" -I - "$conf" "$url" "$token_file" "$action_cache_mode" << 'PY'
+"$python" -I - "$conf" "$url" "$token_file" "$action_cache_mode" "$push" << 'PY'
 import sys
 from pathlib import Path
 
 from ruamel.yaml import YAML
 
-conf, url, token, mode = sys.argv[1:]
+conf, url, token, mode, push = sys.argv[1:]
+push = push == "true"
 yaml = YAML()
 path = Path(conf)
 data = (yaml.load(path) if path.exists() else None) or {}
 
 
-def server(push=True):
+def server(push):
     s = {"url": url}
     if push:
         s["push"] = True
@@ -78,12 +82,12 @@ def server(push=True):
     return s
 
 
-data["artifacts"] = {"servers": [server()]}
-data["source-caches"] = {"servers": [server()]}
+data["artifacts"] = {"servers": [server(push)]}
+data["source-caches"] = {"servers": [server(push)]}
 cache = data.get("cache") or {}
 if mode == "remote":
     cache["storage-service"] = server(push=False)
-    data["remote-execution"] = {"action-cache-service": server()}
+    data["remote-execution"] = {"action-cache-service": server(push)}
 else:
     cache.pop("storage-service", None)
     data.pop("remote-execution", None)
@@ -94,4 +98,4 @@ else:
 yaml.dump(data, path)
 PY
 
-echo "BuildStream remote cache: $url (action-cache=$action_cache_mode) -> $conf"
+echo "BuildStream remote cache: $url (action-cache=$action_cache_mode, push=$push) -> $conf"

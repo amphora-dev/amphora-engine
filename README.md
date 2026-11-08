@@ -61,7 +61,7 @@ Wine 源码平时开 workspace（改 `.c` 走增量构建）：
 
 ## 缓存
 
-三层：元素产物（CAS）、workspace 构建树、单次编译（recc，经沙箱里的 `remote-apis-socket` 进 action cache）。元素产物和源码走远程缓存（Phoenix）；recc 两级：CI 先用 GitHub Actions cache 里的快照，没有再用 Phoenix，新结果写回 Phoenix。开发机：`BST_REMOTE_CACHE_TOKEN=... BST_ACTION_CACHE_MODE=local bash ci/setup/configure-remote-cache.sh`。细节和数字见 [`docs/CACHE.md`](docs/CACHE.md)。
+三层：元素产物（CAS）、workspace 构建树、单次编译（recc，经沙箱里的 `remote-apis-socket` 进 action cache）。元素产物和源码走远程缓存（Phoenix）；recc 两级：CI 先用 GitHub Actions cache 里的快照，没有再用 Phoenix，新结果写回 Phoenix。开发机：`BST_REMOTE_CACHE_TOKEN=... BST_ACTION_CACHE_MODE=local BST_REMOTE_CACHE_PUSH=false bash ci/setup/configure-remote-cache.sh`（只拉不推）。细节和数字见 [`docs/CACHE.md`](docs/CACHE.md)。
 
 ## 约定
 

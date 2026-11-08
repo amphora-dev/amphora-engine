@@ -48,10 +48,11 @@ bash ci/cache/recc-cache.sh check --limit 200           # 抽查 L2 有没有本
 
 `~/.cache/amphora-recc-known.txt` 记已经在 L2 的条目（导入的快照条目、push 过的），`push` 跳过它们。
 
-开发机：action cache 用 local 模式（本机磁盘就是第一级），元素产物和源码走 Phoenix。新机器第一次用 remote 模式编一遍，之后切回 local。`configure-remote-cache.sh` 只改 `artifacts`、`source-caches`、`cache.storage-service`、`remote-execution` 这几项，镜像和调度设置不动：
+开发机：action cache 用 local 模式（本机磁盘就是第一级），元素产物和源码从 Phoenix 拉、不推（从这里上传约 2.4 MB/s，一个 Wine 产物要十几分钟；推送交给 CI）。想把本机编出的 recc 结果给别人用，单独跑 `recc-cache.sh push`。新机器第一次用 remote 模式编一遍，之后切回 local。`configure-remote-cache.sh` 只改 `artifacts`、`source-caches`、`cache.storage-service`、`remote-execution` 这几项，镜像和调度设置不动：
 
 ```bash
-BST_REMOTE_CACHE_TOKEN=... BST_ACTION_CACHE_MODE=local bash ci/setup/configure-remote-cache.sh
+BST_REMOTE_CACHE_TOKEN=... BST_ACTION_CACHE_MODE=local BST_REMOTE_CACHE_PUSH=false \
+  bash ci/setup/configure-remote-cache.sh
 # 之后 token 存在 ~/.config/bst-remote-cache.token（0600），再跑不用带
 ```
 
