@@ -6,7 +6,9 @@
 #   gh workflow run build.yml -f upload-cache=true     # or "[upload-cache]" in a commit message
 #   bash ci/cache/pull-ci.sh [RUN_ID]                  # default: newest run that has it
 #
-# Needs gh (logged in) and zstd. Safe to repeat; files already present are kept.
+# Needs gh (logged in) and zstd; with aria2c and unzip it downloads over 16
+# connections (several times faster than gh's single stream). Safe to repeat;
+# files already present are kept.
 # From the Mac: GH_TOKEN=$(gh auth token) orb -m bst-amd64 bash ci/cache/pull-ci.sh
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -22,10 +24,20 @@ fi
 tmp="$(mktemp -d "${XDG_CACHE_HOME:-$HOME/.cache}/amphora-pull.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
 echo "pull-ci: run $run" >&2
-gh run download "$run" -R "$repo" -n bst-cache -D "$tmp"
 mkdir "$tmp/snapshot"
-zstd -dc "$tmp/bst-cache.tar.zst" | tar -C "$tmp/snapshot" -xf -
-rm "$tmp/bst-cache.tar.zst"
+if command -v aria2c >/dev/null && command -v unzip >/dev/null; then
+  id="$(gh api "repos/$repo/actions/runs/$run/artifacts" --jq '.artifacts[] | select(.name == "bst-cache") | .id')"
+  [ -n "$id" ] || { echo "run $run has no bst-cache artifact" >&2; exit 1; }
+  # The API answers with a short-lived signed blob URL that serves byte ranges.
+  url="$(curl -fsS -o /dev/null -w '%{redirect_url}' \
+    -H "Authorization: Bearer ${GH_TOKEN:-$(gh auth token)}" \
+    "https://api.github.com/repos/$repo/actions/artifacts/$id/zip")"
+  aria2c -q -x16 -s16 -k4M --file-allocation=none -d "$tmp" -o bst-cache.zip "$url"
+  unzip -p "$tmp/bst-cache.zip" bst-cache.tar.zst | zstd -dc | tar -C "$tmp/snapshot" -xf -
+else
+  gh run download "$run" -R "$repo" -n bst-cache -D "$tmp"
+  zstd -dc "$tmp/bst-cache.tar.zst" | tar -C "$tmp/snapshot" -xf -
+fi
 bash "$here/snapshot.sh" import "$tmp/snapshot"
 
 ci_key="$(cat "$tmp/snapshot/KEY")"

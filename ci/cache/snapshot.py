@@ -13,7 +13,7 @@ SDK artifacts from the buildstream-sdk junction (host SDK, NDK, llvm-mingw)
 are left out: BuildStream refetches their pinned sources and rebuilds them
 when an element that needs them has to build. See docs/CACHE.md.
 
-  snapshot.py export DIR [--target ELEMENT] [--recc-budget GiB]
+  snapshot.py export DIR [--target ELEMENT] [--recc-budget GiB] [--used-since EPOCH]
   snapshot.py import DIR
 
 Run with the BuildStream venv's python (ci/cache/snapshot.sh); it provides the
@@ -195,8 +195,12 @@ def last_used(action: str, bl: list[tuple[str, int]]) -> float:
     return max(times[1:] + [obj(AC, action).stat().st_mtime])  # [0] is the Action
 
 
-def export_recc(dest: Path, budget: float, seen: dict[str, int]) -> tuple[int, int, int]:
-    """Most recently used entries first until `budget` GiB of new blobs."""
+def export_recc(dest: Path, budget: float, seen: dict[str, int], since: float | None) -> tuple[int, int, int]:
+    """Most recently used entries first until `budget` GiB of new blobs.
+
+    With `since` (the start of a successful build that compiled Wine): that
+    build hit or wrote every entry the current sources use, so entries not used
+    since then are dead and are dropped."""
     found = []
     for action, r in recc_entries():
         try:
@@ -204,6 +208,8 @@ def export_recc(dest: Path, budget: float, seen: dict[str, int]) -> tuple[int, i
             found.append((last_used(action, bl), action, bl))
         except FileNotFoundError:
             continue  # casd expired a blob; the entry is a miss anyway
+    if since is not None:
+        found = [f for f in found if f[0] >= since]
     found.sort(reverse=True)
     limit = budget * 2**30
     total = kept = 0
@@ -224,14 +230,18 @@ def export_recc(dest: Path, budget: float, seen: dict[str, int]) -> tuple[int, i
 # --- commands ------------------------------------------------------------------
 
 
-def export(dest: Path, target: str, budget: float) -> None:
+def export(dest: Path, target: str, budget: float, since: float | None) -> None:
     if dest.exists():
         shutil.rmtree(dest)
     dest.mkdir(parents=True)
     seen: dict[str, int] = {}
     arts, art_missing = export_artifacts(dest, target, seen)
+    if arts == 0:
+        # Shown as an annotation on GitHub. Most likely a BuildStream upgrade
+        # changed the ref layout or the Artifact proto this script reads.
+        print("::warning::snapshot: no element artifacts exported; check ci/cache/snapshot.py against this BuildStream")
     art_size = sum(seen.values())
-    recc, recc_all, recc_size = export_recc(dest, budget, seen)
+    recc, recc_all, recc_size = export_recc(dest, budget, seen, since)
     print(
         f"snapshot: {arts} artifacts ({art_size / 2**30:.2f} GiB"
         + (f", {art_missing} not cached" if art_missing else "")
@@ -269,11 +279,12 @@ def main() -> int:
     e.add_argument("dir", type=lambda v: Path(v).expanduser())
     e.add_argument("--target", default="runtime.bst")
     e.add_argument("--recc-budget", type=float, default=4.0, help="GiB of recc blobs to keep (default 4)")
+    e.add_argument("--used-since", type=float, help="start of a successful Wine build; drop recc entries it did not use")
     i = sub.add_parser("import")
     i.add_argument("dir", type=lambda v: Path(v).expanduser())
     a = p.parse_args()
     if a.cmd == "export":
-        export(a.dir, a.target, a.recc_budget)
+        export(a.dir, a.target, a.recc_budget, a.used_since)
     else:
         import_(a.dir)
     return 0
