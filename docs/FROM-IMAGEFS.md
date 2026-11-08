@@ -13,8 +13,8 @@
 
 | imagefs | 本仓库 | 改动 |
 |---|---|---|
-| `engine/wine.bst`、`engine/wine-script.bst`、`ci/engine/wine.sh` | `wine/wine.bst`、`wine/script.bst`、`ci/wine.sh` | 只改路径 |
-| `engine/runtime.bst`、`ci/engine/runtime.sh` | `runtime.bst`、`ci/runtime.sh` | 加了所有 ELF 的 16 KB 对齐检查 |
+| `engine/wine.bst`、`engine/wine-script.bst`、`ci/engine/wine.sh` | `wine/wine.bst`、`wine/script.bst`、`scripts/wine.sh` | 只改路径（后来从 `ci/` 挪到 `scripts/`） |
+| `engine/runtime.bst`、`ci/engine/runtime.sh` | `runtime.bst`、`scripts/runtime.sh` | 加了所有 ELF 的 16 KB 对齐检查 |
 | `engine/freetype.bst` | `libs/freetype.bst` | meson profile 从 android26 改成 android30（SDK 新增 `meson-aarch64-android30.ini`） |
 | `wine/host-freetype.bst`、`tools/recc.bst` | 同名 | 无 |
 | `ci/setup/*`、`ci/lint/check-bst-inline-sh.py`、`.github/actions/setup-buildstream` | 同名 | 工具目录改为 `~/.cache/amphora-buildstream/tools` |

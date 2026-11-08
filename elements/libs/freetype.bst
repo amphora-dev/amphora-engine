@@ -11,11 +11,7 @@ depends:
   type: build
   config:
     location: /opt/amphora-sdk/profiles
-- filename: host/noble-amd64.bst
-  junction: buildstream-sdk.bst
-  type: build
-- filename: toolchains/android-ndk-r29.bst
-  junction: buildstream-sdk.bst
+- filename: sdk/toolchain.bst
   type: build
 
 sources:

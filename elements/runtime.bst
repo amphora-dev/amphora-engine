@@ -6,14 +6,7 @@ description: |
   amphora-wine-<version>-<commit12>.tar.gz, its .sha256 and runtime.env.
 
 depends:
-- filename: host/noble-amd64.bst
-  junction: buildstream-sdk.bst
-  type: build
-- filename: toolchains/android-ndk-r29.bst
-  junction: buildstream-sdk.bst
-  type: build
-- filename: toolchains/llvm-mingw-20260721-ucrt.bst
-  junction: buildstream-sdk.bst
+- filename: sdk/toolchain.bst
   type: build
 - filename: wine/wine.bst
   type: build
@@ -24,8 +17,8 @@ depends:
 
 sources:
 - kind: local
-  path: ci/runtime.sh
-  directory: .bst/ci
+  path: scripts/runtime.sh
+  directory: .bst/scripts
 
 environment:
   TARGET_TRIPLE: "%{target-triple}"
@@ -41,5 +34,5 @@ environment:
 
 config:
   install-commands:
-  - bash .bst/ci/runtime.sh
+  - bash .bst/scripts/runtime.sh
   strip-commands: []

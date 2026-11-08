@@ -10,14 +10,7 @@ description: |
   runtime.bst packages the device archive from it.
 
 depends:
-- filename: host/noble-amd64.bst
-  junction: buildstream-sdk.bst
-  type: build
-- filename: toolchains/android-ndk-r29.bst
-  junction: buildstream-sdk.bst
-  type: build
-- filename: toolchains/llvm-mingw-20260721-ucrt.bst
-  junction: buildstream-sdk.bst
+- filename: sdk/toolchain.bst
   type: build
 - filename: wine/host-freetype.bst
   type: build
@@ -31,8 +24,8 @@ depends:
   type: build
 
 # Per-compile cache: recc talks to buildbox-casd through this socket, so object
-# files land in the same CAS/action cache as element artifacts (local, or the
-# shared server via ci/setup/configure-remote-cache.sh). docs/CACHE.md.
+# files land in the local CAS/action cache next to element artifacts. CI carries
+# them between runs in a GitHub Actions cache snapshot. docs/CACHE.md.
 sandbox:
   remote-apis-socket:
     path: /tmp/reapi.sock
@@ -71,7 +64,7 @@ environment:
 
 config:
   build-commands:
-  - bash /opt/amphora/ci/wine.sh build
+  - bash /opt/amphora/scripts/wine.sh build
   install-commands:
-  - bash /opt/amphora/ci/wine.sh install
+  - bash /opt/amphora/scripts/wine.sh install
   strip-commands: []

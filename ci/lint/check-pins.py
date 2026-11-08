@@ -2,13 +2,13 @@
 """Check the values that are written down in more than one place.
 
 BuildStream stages sources without .git, and Wine's configure is driven from
-ci/wine.sh rather than project.conf, so a few facts are necessarily repeated:
+scripts/wine.sh rather than project.conf, so a few facts are necessarily repeated:
 
 - the Wine commit: wine/wine.bst source `ref` == runtime.bst `WINE_COMMIT`
   (the runtime archive name and manifest are built from the latter);
 - the Android API level: project.conf `target-triple` and the meson cross
-  file next to it. Wine (ci/wine.sh) and the manifest's minSdk
-  (ci/runtime.sh) read `target-triple` through TARGET_TRIPLE.
+  file next to it. Wine (scripts/wine.sh) and the manifest's minSdk
+  (scripts/runtime.sh) read `target-triple` through TARGET_TRIPLE.
 """
 from __future__ import annotations
 

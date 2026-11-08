@@ -16,14 +16,15 @@ Amphora 引擎设备端运行时的构建项目：从源码构建 Wine（Valve P
 ## 元素
 
 ```text
-runtime.bst                 打包、strip、校验、写 manifest（ci/runtime.sh）
-├── wine/wine.bst           Wine 本体（ci/wine.sh），产物是未 strip 的 /opt/wine
-│   ├── wine/script.bst     ci/wine.sh（单独成元素，workspace 里也拿得到）
+runtime.bst                 打包、strip、校验、写 manifest（scripts/runtime.sh）
+├── wine/wine.bst           Wine 本体（scripts/wine.sh），产物是未 strip 的 /opt/wine
+│   ├── wine/script.bst     scripts/wine.sh（单独成元素，workspace 里也拿得到）
 │   ├── wine/host-freetype  构建期工具 sfnt2fon 用的宿主 FreeType
 │   ├── libs/freetype.bst   目标 FreeType（Wine 只链它）
 │   └── tools/recc.bst      单次编译缓存（docs/CACHE.md）
-└── libs/freetype.bst
-buildstream-sdk.bst         junction：宿主 SDK、NDK r29、llvm-mingw、meson profile
+├── libs/freetype.bst
+└── sdk/toolchain.bst       stack：宿主 SDK + NDK r29 + llvm-mingw（换版本只改这里）
+buildstream-sdk.bst         junction：上面三样和 meson profile
 ```
 
 新库放 `libs/`，按里程碑加，跟着第一个用到它的元素进来（`project.conf` 的 alias 也一样）。
@@ -61,10 +62,10 @@ Wine 源码平时开 workspace（改 `.c` 走增量构建）：
 
 ## 缓存
 
-三层：元素产物（CAS）、workspace 构建树、单次编译（recc，经沙箱里的 `remote-apis-socket` 进 action cache）。元素产物和源码走远程缓存（Phoenix）；recc 两级：CI 先用 GitHub Actions cache 里的快照，没有再用 Phoenix，新结果写回 Phoenix。开发机：`BST_REMOTE_CACHE_TOKEN=... BST_ACTION_CACHE_MODE=local BST_REMOTE_CACHE_PUSH=false bash ci/setup/configure-remote-cache.sh`（只拉不推）。细节和数字见 [`docs/CACHE.md`](docs/CACHE.md)。
+都在 BuildStream 的本地缓存里：元素产物、workspace 构建树、单次编译（recc，经沙箱里的 `remote-apis-socket` 进 action cache）。没有远程缓存服务器。CI 把本项目的元素产物和 recc 结果存成 GitHub Actions cache 快照，下一次运行导入；SDK 不进快照，要用时重新下载。细节和数字见 [`docs/CACHE.md`](docs/CACHE.md)。
 
 ## 约定
 
-- 元素里的 `*-commands` 由 `sh -c -e` 跑，SDK 的 `/bin/sh` 是 dash：inline 只写 POSIX sh，长逻辑放 `ci/*.sh`。`ci/lint/check-bst-inline-sh.py` 检查。
+- 元素里的 `*-commands` 由 `sh -c -e` 跑，SDK 的 `/bin/sh` 是 dash：inline 只写 POSIX sh，长逻辑放 `scripts/*.sh`（沙箱里跑的构建脚本；`ci/` 只放宿主上跑的 CI 工具）。`ci/lint/check-bst-inline-sh.py` 检查。
 - API 水位只在 `project.conf` 的 `target-triple` 写一次，Wine 和 manifest 的 minSdk 都从它来；Wine commit 写在两处（BuildStream 不保留 `.git`），由 `ci/lint/check-pins.py` 对齐。
 - 不在 BuildStream 外维护平行的构建配方、共享 staging 或完成标记；ccache 这类沙箱外缓存也不用，单次编译缓存走 recc + CAS。

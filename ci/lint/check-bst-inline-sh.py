@@ -5,7 +5,7 @@ BuildStream runs each *-commands entry with `sh -c -e` inside the sandbox, and
 the host SDK is Ubuntu, so /bin/sh is dash. Bash-only syntax such as
 `${var:0:8}` passes locally under bash and then fails in CI with
 "Bad substitution" (build-box64 run 36211466431). Anything beyond a few lines
-belongs in a `ci/**/*.sh` bash script invoked as `bash .bst/...`; this check
+belongs in a `scripts/*.sh` bash script invoked as `bash .bst/...`; this check
 keeps what remains inline POSIX.
 
 Each command is written to a temp file and run through `shellcheck -s sh`.
@@ -84,7 +84,7 @@ def main() -> int:
         print("\n".join(failures))
         print(
             "\nInline BuildStream commands run under POSIX sh (dash). "
-            "Move bash logic into a ci/**/*.sh script and call it with `bash .bst/...`.",
+            "Move bash logic into a scripts/*.sh script and call it with `bash .bst/...`.",
             file=sys.stderr,
         )
         return 1

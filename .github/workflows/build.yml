@@ -9,7 +9,9 @@ on:
     branches: [main]
     paths:
     - "elements/**"
-    - "ci/**"
+    - "scripts/**"
+    - "ci/cache/**"
+    - "ci/setup/**"
     - "project.conf"
     - "bst"
     - ".github/actions/setup-buildstream/**"
@@ -17,27 +19,33 @@ on:
   pull_request:
     paths:
     - "elements/**"
-    - "ci/**"
+    - "scripts/**"
+    - "ci/cache/**"
+    - "ci/setup/**"
     - "project.conf"
     - "bst"
     - ".github/actions/setup-buildstream/**"
     - ".github/workflows/build.yml"
   workflow_dispatch:
+  # GitHub evicts a cache entry after 7 days without access. A no-change run
+  # restores the snapshot (an access) and builds nothing.
+  schedule:
+  - cron: "17 3 * * 1,4"
 
 permissions:
   actions: write
   contents: write
 
-# The recc snapshot below is immutable and cannot be merged; serialize runs on
-# the same ref so every main build restores and extends the latest one.
+# Snapshots are immutable and cannot be merged; serialize runs on the same ref
+# so every main build restores and extends the latest one.
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: false
 
 env:
-  # Bump to drop every snapshot (e.g. after a cache-format change).
-  # v2: only action results and their blobs (ci/cache/recc-cache.py export).
-  SNAPSHOT_PREFIX: recc-v2-linux-
+  # Bump to drop every snapshot (e.g. after a layout change in ci/cache/snapshot.py).
+  SNAPSHOT_PREFIX: bst-v3-
+  SNAPSHOT_DIR: ~/.cache/amphora-snapshot
 
 jobs:
   runtime:
@@ -52,46 +60,28 @@ jobs:
         df -h /
 
     - uses: ./.github/actions/setup-buildstream
-      with:
-        remote-cache-token: ${{ secrets.BST_REMOTE_CACHE_TOKEN }}
 
-    # Only the artifact index is queried. When the exact Wine artifact is
-    # available, skip downloading the action-cache snapshot.
-    - name: Is the Wine element cached?
-      id: wine
-      run: |
-        state="$(./bst artifact show --deps none wine/wine.bst)"
-        echo "$state"
-        if grep -Eq '^[[:space:]]*(cached|available)[[:space:]]+wine/wine\.bst([[:space:]]|$)' <<<"$state"; then
-          echo "cached=true" >> "$GITHUB_OUTPUT"
-        else
-          echo "cached=false" >> "$GITHUB_OUTPUT"
-        fi
+    # The snapshot is named after runtime.bst's cache key, which covers every
+    # input of the build. An exact hit means there is nothing to build.
+    - name: Snapshot key
+      id: key
+      run: echo "key=${SNAPSHOT_PREFIX}$(./bst --no-colors show --deps none --format '%{full-key}' runtime.bst)" >> "$GITHUB_OUTPUT"
 
-    # Two cache levels for recc (docs/CACHE.md). L1 is this snapshot: only
-    # action results and the blobs they name, no SDK, sources or artifacts.
-    # L2 is the remote cache, used when no snapshot exists.
-    - name: Restore recc snapshot (L1)
+    # Snapshots come from main (PRs and branches can read them). Only this
+    # project's artifacts and recc results; the SDK is refetched when needed.
+    - name: Restore snapshot
       id: restore
-      if: steps.wine.outputs.cached != 'true'
       uses: actions/cache/restore@v4
       with:
-        path: ~/.cache/amphora-recc-snapshot
-        key: ${{ env.SNAPSHOT_PREFIX }}${{ github.run_id }}-${{ github.run_attempt }}
-        restore-keys: ${{ env.SNAPSHOT_PREFIX }}
+        path: ${{ env.SNAPSHOT_DIR }}
+        key: ${{ steps.key.outputs.key }}
+        restore-keys: |
+          ${{ steps.key.outputs.key }}
+          ${{ env.SNAPSHOT_PREFIX }}
 
-    # With a snapshot, serve recc locally instead of checking every hit over
-    # the WAN; element artifacts and sources still use the remote.
-    - name: Use the snapshot for recc
-      id: mode
+    - name: Import snapshot
       if: steps.restore.outputs.cache-matched-key != ''
-      env:
-        BST_ACTION_CACHE_MODE: local
-        BST_REMOTE_CACHE_TOKEN: ${{ secrets.BST_REMOTE_CACHE_TOKEN }}
-      run: |
-        bash ci/cache/recc-cache.sh import ~/.cache/amphora-recc-snapshot
-        bash ci/setup/configure-remote-cache.sh
-        echo "local=true" >> "$GITHUB_OUTPUT"
+      run: bash ci/cache/snapshot.sh import "$SNAPSHOT_DIR"
 
     - name: Build
       id: build
@@ -102,34 +92,39 @@ jobs:
         if [ -n "$summary" ]; then
           echo "::notice::$summary"
           echo "$summary" >> "$GITHUB_STEP_SUMMARY"
-          echo "wine-built=true" >> "$GITHUB_OUTPUT"
         fi
         rm -rf out
         ./bst artifact checkout runtime.bst --directory out/runtime
         cat out/runtime/artifacts/runtime.env >> "$GITHUB_ENV"
         cat out/runtime/artifacts/runtime.env >> "$GITHUB_STEP_SUMMARY"
 
-    # Local mode wrote new results only to this runner; copy them to L2 so
-    # dev machines and snapshot-less runs see them. In remote mode casd has
-    # already written them there.
-    - name: Write new recc entries back (L2)
-      if: success() && steps.mode.outputs.local == 'true' && steps.build.outputs.wine-built == 'true'
-      run: bash ci/cache/recc-cache.sh push | tee -a "$GITHUB_STEP_SUMMARY"
+    # Also after a failed build: compile results from a Wine build that broke
+    # halfway are still valid. Such a snapshot gets a -failed suffix, so the
+    # exact key stays free for the next successful run.
+    - name: Export snapshot
+      id: export
+      if: >-
+        always() && github.ref == 'refs/heads/main' &&
+        steps.restore.outputs.cache-hit != 'true' && steps.build.outcome != 'skipped'
+      run: |
+        bash ci/cache/snapshot.sh export "$SNAPSHOT_DIR" | tee -a "$GITHUB_STEP_SUMMARY"
+        key="${{ steps.key.outputs.key }}"
+        if [ "${{ steps.build.outcome }}" != success ]; then
+          key="$key-failed-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+        fi
+        echo "key=$key" >> "$GITHUB_OUTPUT"
 
-    - name: Export recc snapshot
-      if: success() && github.ref == 'refs/heads/main' && steps.build.outputs.wine-built == 'true'
-      run: bash ci/cache/recc-cache.sh export ~/.cache/amphora-recc-snapshot | tee -a "$GITHUB_STEP_SUMMARY"
-
-    - name: Save recc snapshot (L1)
+    - name: Save snapshot
       id: save
-      if: success() && github.ref == 'refs/heads/main' && steps.build.outputs.wine-built == 'true'
+      if: always() && steps.export.outcome == 'success'
       uses: actions/cache/save@v4
       with:
-        path: ~/.cache/amphora-recc-snapshot
-        key: ${{ env.SNAPSHOT_PREFIX }}${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ env.SNAPSHOT_DIR }}
+        key: ${{ steps.export.outputs.key }}
 
+    # The 10 GB per-repository cache limit holds about two snapshots.
     - name: Keep the newest two snapshots
-      if: success() && steps.save.outcome == 'success'
+      if: always() && steps.save.outcome == 'success'
       env:
         GH_TOKEN: ${{ github.token }}
         GH_REPO: ${{ github.repository }}
@@ -148,7 +143,7 @@ jobs:
         retention-days: 14
 
     - name: Publish Release
-      if: github.ref == 'refs/heads/main'
+      if: github.ref == 'refs/heads/main' && github.event_name != 'schedule'
       env:
         GH_TOKEN: ${{ github.token }}
         GH_REPO: ${{ github.repository }}

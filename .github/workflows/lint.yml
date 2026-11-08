@@ -27,7 +27,7 @@ jobs:
       - name: BuildStream inline commands are POSIX sh
         run: |
           # BuildStream runs *-commands via `sh -c -e`; the Ubuntu SDK's /bin/sh
-          # is dash. Bash logic belongs in ci/**/*.sh.
+          # is dash. Bash logic belongs in scripts/*.sh.
           python3 -c 'import yaml' 2>/dev/null || pip install --quiet pyyaml
           python3 ci/lint/check-bst-inline-sh.py
 
