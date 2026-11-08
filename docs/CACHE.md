@@ -1,6 +1,6 @@
 # 缓存
 
-Wine 是这里唯一编译时间长的元素：约 1.4 万次编译调用，冷编时 Wine 元素在 GitHub runner 上约 26 分钟，在 OrbStack amd64 上 30:23。所有缓存都在 BuildStream 自己的本地缓存（`~/.cache/buildstream`）里，没有远程缓存服务器；单次编译的缓存是 ccache，它的目录也存在 BuildStream 的 CAS 里。
+Wine 是这里唯一编译时间长的元素：约 1.4 万次编译调用，冷编时 Wine 元素在 GitHub runner 上约 23 分钟，在 OrbStack amd64 上 30:23。所有缓存都在 BuildStream 自己的本地缓存（`~/.cache/buildstream`）里，没有远程缓存服务器；单次编译的缓存是 ccache，它的目录也存在 BuildStream 的 CAS 里。
 
 | 缓存什么 | 什么时候命中 | 代价 |
 |---|---|---|
@@ -30,7 +30,7 @@ Action{Command["amphora-ccache", "wine"]}  →  ActionResult{output_files: ccach
 
 `dev/wine.sh` 的 ccache 目录在开发机本地（`~/.cache/amphora-dev/wine/ccache`）。每次构建前把 `bst build` 存下的那份合并进来（同一份只合并一次，已有的文件不覆盖），它自己的结果不回写。所以 `bst build` 之后第一次 `dev/wine.sh build` 即使要重新 configure，编译也全部命中（实测 357 秒，13933 次全中）。
 
-**为什么换掉 recc。** recc 也是在每次编译前查缓存，但每次命中都有固定开销：先跑一遍预处理算依赖，再哈希所有输入、查 casd。同一棵树全部命中时 Wine 元素在 OrbStack 上要 15:16，ccache 是 6:27（九成以上走 direct 模式，只哈希源文件和它记下的头文件，不预处理）。
+**为什么换掉 recc。** recc 也是在每次编译前查缓存，但每次命中都有固定开销：先跑一遍预处理算依赖，再哈希所有输入、查 casd。同一棵树全部命中时 Wine 元素在 OrbStack 上要 15:16，ccache 是 6:27（九成以上走 direct 模式，只哈希源文件和它记下的头文件，不预处理）；CI 上是 7:06 对 2:55。
 
 ## 正确性
 
@@ -73,13 +73,15 @@ bash ci/cache/snapshot.sh export DIR [--target runtime.bst]  # 硬链接到 DIR
 bash ci/cache/snapshot.sh import DIR                         # 链回本地缓存
 ```
 
-recc 时期的实测（2026-11-08，ubuntu-24.04 runner），换 ccache 后的数字待补：
+实测（2026-11-09，ubuntu-24.04 runner）：
 
 | 情况 | 整个 job | `bst build` | 其中 |
 |---|---|---|---|
-| 冷编（没有快照） | 31:35 | 29:49 | Wine 26:12，Wine 源码 clone 约 2 分钟，SDK 下载加导入约 1 分钟，打包 1:24 |
-| 精确命中 | 1:53 | 1 秒 | 恢复快照 29 秒，导入 2 秒 |
-| 只改 Wine 的 key（recc 全部命中） | 11:56 | 10:29 | Wine 7:06，Wine 源码 clone 1:46，SDK 约 1 分钟，打包 1:30 |
+| 冷编（快照里没有 ccache） | 27:21 | 25:54 | Wine 22:56（同一次构建里重复的编译有 1756 次命中），Wine 源码 clone 1:26，打包 1:29；存 ccache（515 MiB）20.7 秒 |
+| 只改 Wine 的 key（ccache 全部命中） | 6:52 | 6:20 | Wine 2:55（含恢复 ccache 11.6 秒），Wine 源码 clone 1:50，打包 1:33；恢复快照（1.1 GB）10 秒，导入 1 秒 |
+| 精确命中 | 约 2 分钟 | 1 秒 | 只恢复和导入快照，和编译缓存无关（recc 时期测得 1:53） |
+
+recc 时期（2026-11-08）冷编 31:35（Wine 26:12），只改 key 11:56（Wine 7:06）。
 
 ## 不缓存的部分
 
