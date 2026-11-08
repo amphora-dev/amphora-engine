@@ -4,7 +4,7 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TOOLS_ROOT="${BST_TOOLS_ROOT:-$HOME/.cache/amphora-buildstream/tools}"
 BST="$TOOLS_ROOT/venv/bin/bst"
-export PATH="$TOOLS_ROOT/venv/bin:$TOOLS_ROOT/bin:$PATH"
+export PATH="$TOOLS_ROOT/venv/bin:$PATH"
 
 if [ ! -x "$BST" ]; then
     echo "BuildStream tools are missing; run ci/setup/install-buildstream.sh first" >&2

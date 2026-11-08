@@ -5,7 +5,7 @@ Wine 是这里唯一编译时间长的元素：约 1.2 万次编译调用，冷�
 | 缓存什么 | 什么时候命中 | 代价 |
 |---|---|---|
 | 元素产物 | 元素和它所有依赖的输入都没变 | 秒级；只重做下游，例如只改 `scripts/runtime.sh` 时只重新打包 |
-| workspace 构建树（开发机） | 在 workspace 里改普通 `.c` | 约 5 分钟；`scripts/wine.sh` 只在 configure 的输入变了才重新 configure |
+| `dev/wine.sh` 的构建树（开发机） | 改普通 `.c` 后重编 | 12–14 秒（OrbStack，改一个文件）；其中 8 秒是 make 走一遍 Wine 的目录树。`scripts/wine.sh` 只在 configure 的输入变了才重新 configure |
 | 单次编译（recc） | 换 Wine ref、改 `configure.ac`、换分支：元素 key 变了，但大部分 `.o` 的输入没变 | 全部命中时 Wine 元素 7:06（GitHub runner），15:16（OrbStack） |
 
 开发机靠本机磁盘就够了。CI 的 runner 每次都是空的，所以要把本地缓存的一部分带到下一次运行，见下面的“CI 快照”。

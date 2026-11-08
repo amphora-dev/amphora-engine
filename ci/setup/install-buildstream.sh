@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# Install pinned BuildStream + BuildBox on the host. recc runs inside the
-# sandbox and comes from buildstream/elements/tools/recc.bst.
+# Install pinned BuildStream on the host. BuildBox (casd, fuse, run) comes
+# bundled in the BuildStream wheel (2.8.1: buildbox 1.4.25), so the three
+# always match. recc runs inside the sandbox and comes from elements/tools/recc.bst.
 set -euo pipefail
 
-BST_VERSION="${BST_VERSION:-2.7.0}"
-BST_CORE_PLUGINS_VERSION="${BST_CORE_PLUGINS_VERSION:-2.7.0}"
+BST_VERSION="${BST_VERSION:-2.8.1}"
+BST_CORE_PLUGINS_VERSION="${BST_CORE_PLUGINS_VERSION:-2.8.0}"
+# The buildstream-sdk junction uses its zip source (the NDK).
 BST_PLUGINS_VERSION="${BST_PLUGINS_VERSION:-2.3.1}"
-BUILDBOX_VERSION="${BUILDBOX_VERSION:-1.4.15}"
-BUILDBOX_SHA256="${BUILDBOX_SHA256:-07ce72be4a7a33534a1f31a7ebf28fb1d830686c6deff068ee6353e2fc811c0d}"
 TOOLS_ROOT="${BST_TOOLS_ROOT:-$HOME/.cache/amphora-buildstream/tools}"
 VENV="$TOOLS_ROOT/venv"
 BIN="$TOOLS_ROOT/bin"
 
-mkdir -p "$TOOLS_ROOT" "$BIN"
+mkdir -p "$TOOLS_ROOT"
 
 plugin_versions="$("$VENV/bin/python" -c \
     'from importlib.metadata import version; print(version("buildstream-plugins"), version("buildstream-plugins-community"))' \
@@ -29,23 +29,13 @@ if [ ! -x "$VENV/bin/bst" ] ||
         "buildstream-plugins-community==$BST_PLUGINS_VERSION"
 fi
 
-if [ ! -x "$BIN/buildbox-casd" ] ||
-   [ "$("$BIN/buildbox-casd" --version 2>/dev/null | awk 'NR == 1 {print $2}')" != "$BUILDBOX_VERSION" ]; then
-    archive="$(mktemp)"
-    trap 'rm -f "$archive"' EXIT
-    curl -fsSL --retry 3 \
-        "https://gitlab.com/BuildGrid/buildbox/buildbox-integration/-/releases/$BUILDBOX_VERSION/downloads/buildbox-x86_64-linux-gnu.tgz" \
-        -o "$archive"
-    printf '%s  %s\n' "$BUILDBOX_SHA256" "$archive" | sha256sum -c -
-    rm -rf "$BIN"
-    mkdir -p "$BIN"
-    tar -xzf "$archive" -C "$BIN"
-fi
-ln -sfn "$BIN/buildbox-run-bubblewrap" "$BIN/buildbox-run"
+# Earlier versions of this script put a separate BuildBox here; anything in
+# $BIN comes first in PATH and would shadow the bundled one.
+rm -rf "$BIN"
 
 if [ -n "${GITHUB_PATH:-}" ]; then
-    printf '%s\n%s\n' "$VENV/bin" "$BIN" >> "$GITHUB_PATH"
+    printf '%s\n' "$VENV/bin" >> "$GITHUB_PATH"
 fi
 
 printf 'BuildStream %s installed in %s\n' "$BST_VERSION" "$TOOLS_ROOT"
-printf 'export PATH=%q:%q:$PATH\n' "$VENV/bin" "$BIN"
+printf 'export PATH=%q:$PATH\n' "$VENV/bin"

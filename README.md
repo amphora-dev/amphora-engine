@@ -18,7 +18,7 @@ Amphora 引擎设备端运行时的构建项目：从源码构建 Wine（Valve P
 ```text
 runtime.bst                 打包、strip、校验、写 manifest（scripts/runtime.sh）
 ├── wine/wine.bst           Wine 本体（scripts/wine.sh），产物是未 strip 的 /opt/wine
-│   ├── wine/script.bst     scripts/wine.sh（单独成元素，workspace 里也拿得到）
+│   ├── wine/script.bst     scripts/wine.sh（单独成元素）
 │   ├── wine/host-freetype  构建期工具 sfnt2fon 用的宿主 FreeType
 │   ├── libs/freetype.bst   目标 FreeType（Wine 只链它）
 │   └── tools/recc.bst      单次编译缓存（docs/CACHE.md）
@@ -41,7 +41,7 @@ bash ci/setup/install-buildstream.sh
 ./bst artifact checkout runtime.bst --directory out/runtime
 ```
 
-**没推送的提交**：Wine 分支和 SDK 分支在推到 GitHub 之前，用本地镜像或 workspace 构建。`~/.config/buildstream.conf`：
+**没推送的提交**：Wine 分支和 SDK 分支在推到 GitHub 之前，用本地镜像构建。`~/.config/buildstream.conf`：
 
 ```yaml
 projects:
@@ -54,15 +54,19 @@ projects:
     default-mirror: local
 ```
 
-Wine 源码平时开 workspace（改 `.c` 走增量构建）：
+改 Wine 源码用 `dev/wine.sh`，不用 BuildStream workspace（workspace 每次都要把整棵构建树重新存进 CAS，慢）：
 
 ```bash
-./bst workspace open --no-checkout --directory ~/co/github/wine-ws wine/wine.bst
+dev/wine.sh build     # 在 wine.bst 自己的构建沙箱里增量编译；源码默认是旁边的 ../wine-arm64ec（WINE_SRC 可改）
+dev/wine.sh mark      # 记下时间点
+dev/wine.sh changed   # 列出之后变了的、要推到设备上的文件
 ```
+
+它把 `WINE_SRC` 同步到 `~/.cache/amphora-dev/wine/src`，构建树在旁边的 `build/`，编译命中和 CI 一样的 recc 缓存。第一次约 15 分钟（几乎全部命中 recc），之后改一个 `.c` 约 12 秒。要先 `./bst build runtime.bst` 一次（或 `ci/cache/pull-ci.sh`），让 wine.bst 的构建依赖都在缓存里。
 
 ## 缓存
 
-都在 BuildStream 的本地缓存里：元素产物、workspace 构建树、单次编译（recc，经沙箱里的 `remote-apis-socket` 进 action cache）。没有远程缓存服务器。CI 把本项目的元素产物和 recc 结果存成 GitHub Actions cache 快照，下一次运行导入；SDK 不进快照，要用时重新下载。细节和数字见 [`docs/CACHE.md`](docs/CACHE.md)。
+都在 BuildStream 的本地缓存里：元素产物、单次编译（recc，经沙箱里的 `remote-apis-socket` 进 action cache）。没有远程缓存服务器。CI 把本项目的元素产物和 recc 结果存成 GitHub Actions cache 快照，下一次运行导入；SDK 不进快照，要用时重新下载。细节和数字见 [`docs/CACHE.md`](docs/CACHE.md)。
 
 ## 约定
 
