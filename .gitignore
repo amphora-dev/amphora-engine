@@ -4,3 +4,5 @@
 # Checked-out artifacts
 /out/
 .DS_Store
+# Python bytecode (ci/ scripts run on the dev VM)
+__pycache__/
