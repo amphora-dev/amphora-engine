@@ -28,8 +28,8 @@ set -euo pipefail
 : "${WINE_PREFIX:?BuildStream must provide WINE_PREFIX}"
 
 SRC="$PWD"
-# Build tree. Inside `bst build` it lives in the sandbox build dir (and is kept
-# as the element's buildtree); the dev loop (dev/wine.sh) points it outside.
+# Build tree, inside the source tree as in `bst build` (where it is kept as the
+# element's buildtree on failure). dev/wine.sh mounts its own tree here.
 OUT="${AMPHORA_BUILD_DIR:-$SRC/_amphora}"
 # Siblings: configure_flags passes the tools tree to the target tree as ../tools.
 TOOLS="$OUT/tools"
@@ -41,13 +41,15 @@ NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
 HOST_PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # --- recc (per-compile action cache through the sandbox remote-apis socket) ---
-# Active only when the element provides recc and the socket is there (`bst shell`
-# has no remote-apis socket); otherwise every helper below is a no-op and the
-# build is a plain local build.
+# Active only when the element provides recc and the socket is there (also in
+# `bst shell --build`); otherwise every helper below is a no-op and the build is
+# a plain local build.
 RECC=""
 if command -v recc >/dev/null 2>&1 && [ -n "${RECC_SERVER:-}" ] && [ -S "${RECC_SERVER#unix:}" ]; then
   RECC=recc
-  RECC_WRAP="$OUT/recc-wrap"
+  # PATH is part of every action's key, so the shims live at a fixed path, not
+  # under the build root (which differs between `bst build` and dev/wine.sh).
+  RECC_WRAP=/tmp/recc-wrap
   export RECC_LOG_LEVEL=info RECC_LOG_DIRECTORY=/tmp/recc-logs
   # Paths under the source tree enter action keys relative to it. The sandbox
   # build root is /buildstream/<project>/<element>, so without this a renamed

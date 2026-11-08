@@ -11,7 +11,7 @@ depends:
 
 sources:
 - kind: remote
-  url: https://gitlab.com/api/v4/projects/8347934/packages/generic/releases/1.4.15/recc-1.4.15-x86_64-linux-gnu.tgz
+  url: buildbox:1.4.15/recc-1.4.15-x86_64-linux-gnu.tgz
   ref: 3e4ebe6ce1f33de5788d58343338bde9758297f458768d224671698f92c1bed3
   filename: recc-1.4.15-x86_64-linux-gnu.tgz
 
