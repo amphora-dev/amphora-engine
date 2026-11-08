@@ -1,0 +1,35 @@
+# Cheap checks on every push and PR; they run in seconds.
+name: lint
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: shellcheck
+        run: |
+          mapfile -t scripts < <(find . -name '*.sh' -not -path './.git/*' | sort)
+          printf 'checking %d scripts\n' "${#scripts[@]}"
+          shellcheck -S warning -f gcc "${scripts[@]}"
+
+      - name: bash -n
+        run: find . -name '*.sh' -not -path './.git/*' -print0 | xargs -0 -n1 bash -n
+
+      - name: executable bit on entrypoints
+        run: test -x bst
+
+      - name: BuildStream inline commands are POSIX sh
+        run: |
+          # BuildStream runs *-commands via `sh -c -e`; the Ubuntu SDK's /bin/sh
+          # is dash. Bash logic belongs in ci/**/*.sh.
+          python3 -c 'import yaml' 2>/dev/null || pip install --quiet pyyaml
+          python3 ci/lint/check-bst-inline-sh.py
+
+      - name: repeated pins agree
+        run: python3 ci/lint/check-pins.py

@@ -1,0 +1,6 @@
+# BuildStream local state (workspaces are per machine)
+/.bst/
+/.bst2/
+# Checked-out artifacts
+/out/
+.DS_Store

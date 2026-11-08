@@ -1,0 +1,4 @@
+# shellcheck configuration — enforced by .github/workflows/lint.yml.
+#
+# Follow `source`d files when a path is statically known.
+external-sources=true
