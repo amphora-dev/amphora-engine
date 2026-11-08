@@ -24,6 +24,9 @@ case "$action_cache_mode" in
         ;;
 esac
 
+if [ -z "$token" ] && [ -s "$token_file" ]; then
+    token="$(cat "$token_file")"
+fi
 if [ -z "$token" ]; then
     if [ "${BST_REMOTE_CACHE_REQUIRED:-false}" = true ]; then
         echo "BST_REMOTE_CACHE_TOKEN is required but empty" >&2
@@ -42,58 +45,53 @@ mkdir -p "$conf_dir"
 # Per-RPC ceiling. A stalled stream fails here instead of holding the job
 # until the workflow timeout. keepalive lets casd notice a dead connection.
 #
-# In local action-cache mode, artifacts and sources still use the shared
-# server, but BuildStream starts casd without a storage/action-cache upstream.
-# This lets recc serve a restored local snapshot without validating every hit
-# over the WAN.
-{
-    if [ "$action_cache_mode" = remote ]; then
-        cat << EOF
-cache:
-  storage-service:
-    url: $url
-    auth:
-      access-token: $token_file
-    connection-config:
-      request-timeout: 900
-      keepalive-time: 30
-EOF
-    fi
+# Element artifacts and sources always use the shared server. The action
+# cache behind remote-apis-socket (recc) depends on the mode:
+#   remote  casd proxies recc's action cache and CAS to the server. For a
+#           machine without a local copy (runner without a snapshot, new
+#           dev machine). BuildStream 2.7 then checks every hit over the WAN.
+#   local   casd serves recc from the local cache only; hits never leave the
+#           machine. For a restored GitHub snapshot or a dev machine's own
+#           cache. `ci/cache/recc-cache.py push` writes new entries back.
+#
+# Only these keys are touched; mirrors, scheduler and other settings in an
+# existing buildstream.conf are kept.
+python="${BST_TOOLS_ROOT:-$HOME/.cache/amphora-buildstream/tools}/venv/bin/python"
+"$python" -I - "$conf" "$url" "$token_file" "$action_cache_mode" << 'PY'
+import sys
+from pathlib import Path
 
-    cat << EOF
-artifacts:
-  servers:
-  - url: $url
-    push: true
-    auth:
-      access-token: $token_file
-    connection-config:
-      request-timeout: 900
-      keepalive-time: 30
-source-caches:
-  servers:
-  - url: $url
-    push: true
-    auth:
-      access-token: $token_file
-    connection-config:
-      request-timeout: 900
-      keepalive-time: 30
-EOF
+from ruamel.yaml import YAML
 
-    if [ "$action_cache_mode" = remote ]; then
-        cat << EOF
-remote-execution:
-  action-cache-service:
-    url: $url
-    push: true
-    auth:
-      access-token: $token_file
-    connection-config:
-      request-timeout: 900
-      keepalive-time: 30
-EOF
-    fi
-} > "$conf"
+conf, url, token, mode = sys.argv[1:]
+yaml = YAML()
+path = Path(conf)
+data = (yaml.load(path) if path.exists() else None) or {}
+
+
+def server(push=True):
+    s = {"url": url}
+    if push:
+        s["push"] = True
+    s["auth"] = {"access-token": token}
+    s["connection-config"] = {"request-timeout": 900, "keepalive-time": 30}
+    return s
+
+
+data["artifacts"] = {"servers": [server()]}
+data["source-caches"] = {"servers": [server()]}
+cache = data.get("cache") or {}
+if mode == "remote":
+    cache["storage-service"] = server(push=False)
+    data["remote-execution"] = {"action-cache-service": server()}
+else:
+    cache.pop("storage-service", None)
+    data.pop("remote-execution", None)
+if cache:
+    data["cache"] = cache
+else:
+    data.pop("cache", None)
+yaml.dump(data, path)
+PY
 
 echo "BuildStream remote cache: $url (action-cache=$action_cache_mode) -> $conf"

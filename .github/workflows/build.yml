@@ -36,7 +36,8 @@ concurrency:
 
 env:
   # Bump to drop every snapshot (e.g. after a cache-format change).
-  SNAPSHOT_PREFIX: recc-v1-linux-
+  # v2: only action results and their blobs (ci/cache/recc-cache.py export).
+  SNAPSHOT_PREFIX: recc-v2-linux-
 
 jobs:
   runtime:
@@ -67,26 +68,30 @@ jobs:
           echo "cached=false" >> "$GITHUB_OUTPUT"
         fi
 
-    # Action results point at blobs in CAS, so both directories go together.
-    - name: Restore recc snapshot
+    # Two cache levels for recc (docs/CACHE.md). L1 is this snapshot: only
+    # action results and the blobs they name, no SDK, sources or artifacts.
+    # L2 is the remote cache, used when no snapshot exists.
+    - name: Restore recc snapshot (L1)
       id: restore
       if: steps.wine.outputs.cached != 'true'
       uses: actions/cache/restore@v4
       with:
-        path: |
-          ~/.cache/buildstream/cas
-          ~/.cache/buildstream/actioncache
+        path: ~/.cache/amphora-recc-snapshot
         key: ${{ env.SNAPSHOT_PREFIX }}${{ github.run_id }}-${{ github.run_attempt }}
         restore-keys: ${{ env.SNAPSHOT_PREFIX }}
 
-    # With a restored snapshot, serve recc locally instead of validating every
-    # action over the WAN (docs/CACHE.md); artifacts still use the remote.
-    - name: Use the restored snapshot for recc
+    # With a snapshot, serve recc locally instead of checking every hit over
+    # the WAN; element artifacts and sources still use the remote.
+    - name: Use the snapshot for recc
+      id: mode
       if: steps.restore.outputs.cache-matched-key != ''
       env:
         BST_ACTION_CACHE_MODE: local
         BST_REMOTE_CACHE_TOKEN: ${{ secrets.BST_REMOTE_CACHE_TOKEN }}
-      run: bash ci/setup/configure-remote-cache.sh
+      run: |
+        bash ci/cache/recc-cache.sh import ~/.cache/amphora-recc-snapshot
+        bash ci/setup/configure-remote-cache.sh
+        echo "local=true" >> "$GITHUB_OUTPUT"
 
     - name: Build
       id: build
@@ -104,14 +109,23 @@ jobs:
         cat out/runtime/artifacts/runtime.env >> "$GITHUB_ENV"
         cat out/runtime/artifacts/runtime.env >> "$GITHUB_STEP_SUMMARY"
 
-    - name: Save recc snapshot
+    # Local mode wrote new results only to this runner; copy them to L2 so
+    # dev machines and snapshot-less runs see them. In remote mode casd has
+    # already written them there.
+    - name: Write new recc entries back (L2)
+      if: success() && steps.mode.outputs.local == 'true' && steps.build.outputs.wine-built == 'true'
+      run: bash ci/cache/recc-cache.sh push | tee -a "$GITHUB_STEP_SUMMARY"
+
+    - name: Export recc snapshot
+      if: success() && github.ref == 'refs/heads/main' && steps.build.outputs.wine-built == 'true'
+      run: bash ci/cache/recc-cache.sh export ~/.cache/amphora-recc-snapshot | tee -a "$GITHUB_STEP_SUMMARY"
+
+    - name: Save recc snapshot (L1)
       id: save
       if: success() && github.ref == 'refs/heads/main' && steps.build.outputs.wine-built == 'true'
       uses: actions/cache/save@v4
       with:
-        path: |
-          ~/.cache/buildstream/cas
-          ~/.cache/buildstream/actioncache
+        path: ~/.cache/amphora-recc-snapshot
         key: ${{ env.SNAPSHOT_PREFIX }}${{ github.run_id }}-${{ github.run_attempt }}
 
     - name: Keep the newest two snapshots

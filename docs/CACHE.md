@@ -12,7 +12,48 @@ Wine 是这里唯一编译时间长的元素：在 OrbStack amd64（Rosetta）�
 
 - `wine/wine.bst` 声明 `sandbox: remote-apis-socket`，buildbox-casd 在沙箱里的 `/tmp/reapi.sock` 提供 CAS 和 action cache；`action-cache-enable-update: True` 允许写入。
 - `RECC_CACHE_ONLY=1`：不做远程执行，没命中就本地编译，再把结果上传（`RECC_CACHE_UPLOAD_LOCAL_BUILD=1`）。
-- 本地是 `~/.cache/buildstream/{cas,actioncache}`；配了远程缓存（`ci/setup/configure-remote-cache.sh`）时同一个服务器也存 action 结果。
+- 本地落在 `~/.cache/buildstream/actioncache/objects/`（按 Action digest 存 `ActionResult`）和 `cas/objects/`（Action 本身和输出的 `.o`）。
+
+## 两级缓存
+
+元素产物和源码只走远程（Phoenix，`https://cas.arm.512.pub`）。recc 的 action cache 分两级：
+
+| | 放什么 | 在哪 | 谁用 |
+|---|---|---|---|
+| 本机 | 全部 | `~/.cache/buildstream` | 构建本身 |
+| L1 | action 结果 + 它们引用的 blob，最新的 4 GiB | GitHub Actions cache（`recc-v2-linux-*`，保留最新两份） | CI |
+| L2 | 同上，不限 | Phoenix 的 action cache + CAS | 开发机、没有 L1 的 CI |
+
+BuildStream 2.7 不能让 casd 先查本地、未命中再查远程：配了 `remote-execution.action-cache-service`，每次命中都要过一次 WAN（imagefs 时期在美东 runner 上量过，Wine 全命中 13:28，本地快照 6:31）。所以两级在 workflow 里接：
+
+```text
+wine/wine.bst 产物在 Phoenix？  是 → 拉产物，不碰 recc
+L1 快照在？  是 → recc-cache.sh import，action cache 用 local 模式（命中不出本机）
+             否 → remote 模式，casd 把 action cache 代理到 Phoenix（L2 当种子）
+构建
+local 模式下有新编译的结果 → recc-cache.sh push 写回 L2
+main 上编过 Wine → recc-cache.sh export，存新快照
+```
+
+快照不再是整个 `cas/`：`export` 只挑 action 结果和它们指向的 blob（硬链接，不额外占盘）。开发机上 CAS 有 18 GB，其中 recc 只占 1.9 GiB（两条 Wine 线，约 1.6 万条），gzip 后约 0.7 GB。SDK、源码、元素产物、构建树都不进快照。
+
+`ci/cache/recc-cache.sh`（用 BuildStream venv 的 python 跑 `recc-cache.py`）：
+
+```bash
+bash ci/cache/recc-cache.sh export DIR [--budget GiB]   # 最新的条目 + blob 硬链接到 DIR
+bash ci/cache/recc-cache.sh import DIR                  # 链回本地 cache
+bash ci/cache/recc-cache.sh push                        # 把 L2 还没有的条目传上去
+bash ci/cache/recc-cache.sh check --limit 200           # 抽查 L2 有没有本地的条目
+```
+
+`~/.cache/amphora-recc-known.txt` 记已经在 L2 的条目（导入的快照条目、push 过的），`push` 跳过它们。
+
+开发机：action cache 用 local 模式（本机磁盘就是第一级），元素产物和源码走 Phoenix。新机器第一次用 remote 模式编一遍，之后切回 local。`configure-remote-cache.sh` 只改 `artifacts`、`source-caches`、`cache.storage-service`、`remote-execution` 这几项，镜像和调度设置不动：
+
+```bash
+BST_REMOTE_CACHE_TOKEN=... BST_ACTION_CACHE_MODE=local bash ci/setup/configure-remote-cache.sh
+# 之后 token 存在 ~/.config/bst-remote-cache.token（0600），再跑不用带
+```
 
 ## 正确性
 
