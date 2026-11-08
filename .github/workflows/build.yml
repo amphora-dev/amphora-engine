@@ -75,9 +75,7 @@ jobs:
       with:
         path: ${{ env.SNAPSHOT_DIR }}
         key: ${{ steps.key.outputs.key }}
-        restore-keys: |
-          ${{ steps.key.outputs.key }}
-          ${{ env.SNAPSHOT_PREFIX }}
+        restore-keys: ${{ env.SNAPSHOT_PREFIX }}
 
     - name: Import snapshot
       if: steps.restore.outputs.cache-matched-key != ''

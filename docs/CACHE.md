@@ -22,8 +22,8 @@ BuildStream 的设计是：每个元素的产物都进本地 CAS，按输入算�
 
 | 进快照 | 不进快照 |
 |---|---|
-| 本项目元素在当前 key 下的产物（Wine 约 2 GiB、freetype、recc、runtime） | SDK junction 的产物：宿主 SDK、NDK、llvm-mingw（约 3.4 GiB）。要用时 BuildStream 重新下载源码再导入，来源是 Google 和 GitHub Release，都按 sha256 校验 |
-| recc 的编译结果和它们引用的 `.o`，最新的优先，最多 4 GiB | 源码、构建树、日志 |
+| 本项目元素在当前 key 下构建成功的产物（Wine 约 2 GiB、freetype、recc、runtime） | SDK junction 的产物：宿主 SDK、NDK、llvm-mingw（约 3.4 GiB）。要用时 BuildStream 重新下载源码再导入，来源是 Google 和 GitHub Release，都按 sha256 校验 |
+| recc 的编译结果和它们引用的 `.o`，最近用过的优先，最多 4 GiB | 源码、构建树；构建失败的产物 |
 
 快照放在 GitHub Actions cache，key 是 `bst-v3-<runtime.bst 的完整 key>`。runtime.bst 的 key 覆盖了整个构建的所有输入，所以：
 
@@ -36,6 +36,8 @@ main 上没精确命中 → 构建后导出并保存新快照（构建失败也�
 ```
 
 - 只有 main 写快照；PR 和其他分支能读 main 的，不写。
+- 构建失败的产物不进快照：BuildStream 也缓存失败的构建，带过去的话，同一个 key 重跑会直接报失败，不再重试。
+- “最近用过”看输出 `.o` 的 mtime：casd 每次读 CAS 里的 blob 都会更新它的 mtime，action cache 文件写入后就不再动。Wine 编译一次后，没被这次用到的旧结果排在后面，超出预算时先丢它们。
 - GitHub 每个仓库的 cache 上限 10 GB，7 天没被访问就淘汰。workflow 每周一、四定时跑一次：输入没变时精确命中、什么都不编，只为了让快照保持被访问。
 - 开发机读不到 Actions cache（GitHub 没有下载接口），用自己的本地缓存。
 

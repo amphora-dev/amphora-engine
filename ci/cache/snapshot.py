@@ -6,8 +6,8 @@ what is expensive to recreate:
 
   - the artifacts of this project's own elements in the target's dependency
     graph (Wine, its libraries, the runtime archive), at their current keys;
-  - recc's action cache: compile results and the blobs they name, newest
-    first, up to a size budget.
+  - recc's action cache: compile results and the blobs they name, most
+    recently used first, up to a size budget.
 
 SDK artifacts from the buildstream-sdk junction (host SDK, NDK, llvm-mingw)
 are left out: BuildStream refetches their pinned sources and rebuilds them
@@ -138,6 +138,11 @@ def export_artifacts(dest: Path, target: str, seen: dict[str, int]) -> tuple[int
             continue
         art = artifact_pb2.Artifact()
         art.ParseFromString(ref.read_bytes())
+        # A failed build is cached too; carried over, it would stop the next
+        # run at the same key from retrying (build.retry-failed is off).
+        if not art.build_success:
+            missing += 1
+            continue
         need: dict[str, int] = {}
         if not artifact_blobs(art, need):
             missing += 1
@@ -181,17 +186,24 @@ def recc_blobs(action: str, r: re_pb2.ActionResult) -> list[tuple[str, int]]:
     return out
 
 
+def last_used(action: str, bl: list[tuple[str, int]]) -> float:
+    """When recc last hit or wrote this entry. casd never touches an action
+    cache file after writing it, but it bumps a CAS blob's mtime on every read
+    (FsLocalCas::hasBlob), and a hit reads the outputs. Raises
+    FileNotFoundError if any blob is gone."""
+    times = [obj(CAS, h).stat().st_mtime for h, _ in bl]
+    return max(times[1:] + [obj(AC, action).stat().st_mtime])  # [0] is the Action
+
+
 def export_recc(dest: Path, budget: float, seen: dict[str, int]) -> tuple[int, int, int]:
-    """Newest entries first (by the result file's mtime) until `budget` GiB of new blobs."""
+    """Most recently used entries first until `budget` GiB of new blobs."""
     found = []
     for action, r in recc_entries():
         try:
             bl = recc_blobs(action, r)
-            mtime = obj(AC, action).stat().st_mtime
+            found.append((last_used(action, bl), action, bl))
         except FileNotFoundError:
             continue  # casd expired a blob; the entry is a miss anyway
-        if all(obj(CAS, h).exists() for h, _ in bl):
-            found.append((mtime, action, bl))
     found.sort(reverse=True)
     limit = budget * 2**30
     total = kept = 0
