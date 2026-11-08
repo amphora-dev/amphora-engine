@@ -62,6 +62,11 @@ environment:
   RECC_REMOTE_PLATFORM_ISA: x86_64
   RECC_LOG_LEVEL: warning
 
+# Parallelism differs per machine (CI runner, dev VM) and does not change the
+# output; keep it out of the cache key so CI's artifact is reused locally.
+environment-nocache:
+- JOBS
+
 config:
   build-commands:
   - bash /opt/amphora/scripts/wine.sh build

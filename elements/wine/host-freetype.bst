@@ -12,6 +12,12 @@ sources:
   url: freetype:freetype-2.13.3.tar.xz
   ref: 0550350666d427c74daeb85d5ac7bb353acba5f76956395995311a9c6f063289
 
+environment:
+  JOBS: "%{max-jobs}"
+# Parallelism is machine-specific; keep it out of the cache key (as in wine.bst).
+environment-nocache:
+- JOBS
+
 config:
   install-commands:
   - |
@@ -30,7 +36,7 @@ config:
       --without-png \
       --without-harfbuzz \
       --without-brotli
-    make -j"%{max-jobs}"
+    make -j"$JOBS"
     make DESTDIR="%{install-root}" install
 
   strip-commands: []
