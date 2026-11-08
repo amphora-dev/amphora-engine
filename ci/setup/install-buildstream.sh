@@ -6,8 +6,10 @@ set -euo pipefail
 
 BST_VERSION="${BST_VERSION:-2.8.1}"
 BST_CORE_PLUGINS_VERSION="${BST_CORE_PLUGINS_VERSION:-2.8.0}"
-# The buildstream-sdk junction uses its zip source (the NDK).
-BST_PLUGINS_VERSION="${BST_PLUGINS_VERSION:-2.3.1}"
+# The buildstream-sdk junction uses its zip source (the NDK). 2.5.0 changes what
+# zip stages (keeps unix permissions and symlinks) without changing the source's
+# cache key; take it together with a buildstream-sdk change that rekeys the NDK.
+BST_PLUGINS_VERSION="${BST_PLUGINS_VERSION:-2.4.0}"
 TOOLS_ROOT="${BST_TOOLS_ROOT:-$HOME/.cache/amphora-buildstream/tools}"
 VENV="$TOOLS_ROOT/venv"
 BIN="$TOOLS_ROOT/bin"
