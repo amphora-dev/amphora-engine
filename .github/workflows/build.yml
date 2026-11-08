@@ -59,11 +59,6 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Free disk space
-      run: |
-        sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
-        df -h /
-
     - uses: ./.github/actions/setup-buildstream
 
     # The snapshot is named after runtime.bst's cache key, which covers every
@@ -100,6 +95,9 @@ jobs:
         ./bst artifact checkout runtime.bst --directory out/runtime
         cat out/runtime/artifacts/runtime.env >> "$GITHUB_ENV"
         cat out/runtime/artifacts/runtime.env >> "$GITHUB_STEP_SUMMARY"
+        # The runner has about 75 GB free; a cold build needs far less, so
+        # nothing is deleted up front (that took 50 s). Watch the peak here.
+        df -h / | tail -n 1 | awk '{print "disk after build: " $3 " used, " $4 " free"}' | tee -a "$GITHUB_STEP_SUMMARY"
 
     # Also after a failed build: compile results from a Wine build that broke
     # halfway are still valid. Such a snapshot gets a -failed suffix, so the
