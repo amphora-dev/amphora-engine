@@ -28,6 +28,7 @@ sources:
   directory: .bst/ci
 
 environment:
+  TARGET_TRIPLE: "%{target-triple}"
   ANDROID_NDK_HOME: "%{ndk-root}"
   LLVM_MINGW_ROOT: /opt/llvm-mingw
   TARGET_SYSROOT: /opt/android-sysroot

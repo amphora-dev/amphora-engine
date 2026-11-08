@@ -66,5 +66,5 @@ Wine 源码平时开 workspace（改 `.c` 走增量构建）：
 ## 约定
 
 - 元素里的 `*-commands` 由 `sh -c -e` 跑，SDK 的 `/bin/sh` 是 dash：inline 只写 POSIX sh，长逻辑放 `ci/*.sh`。`ci/lint/check-bst-inline-sh.py` 检查。
-- 写在两处的值（Wine commit、API 水位）由 `ci/lint/check-pins.py` 对齐。
+- API 水位只在 `project.conf` 的 `target-triple` 写一次，Wine 和 manifest 的 minSdk 都从它来；Wine commit 写在两处（BuildStream 不保留 `.git`），由 `ci/lint/check-pins.py` 对齐。
 - 不在 BuildStream 外维护平行的构建配方、共享 staging 或完成标记；ccache 这类沙箱外缓存也不用，单次编译缓存走 recc + CAS。

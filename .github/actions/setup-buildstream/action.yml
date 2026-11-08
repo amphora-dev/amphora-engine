@@ -48,5 +48,6 @@ runs:
     shell: bash
     env:
       BST_REMOTE_CACHE_TOKEN: ${{ inputs.remote-cache-token }}
-      BST_REMOTE_CACHE_REQUIRED: ${{ github.event_name != 'pull_request' }}
+      # Without the secret, builds use the local cache only (slower, still correct).
+      BST_REMOTE_CACHE_REQUIRED: "false"
     run: bash ci/setup/configure-remote-cache.sh

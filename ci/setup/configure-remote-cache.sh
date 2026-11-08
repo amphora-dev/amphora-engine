@@ -30,6 +30,9 @@ if [ -z "$token" ]; then
         exit 1
     fi
     echo "BST_REMOTE_CACHE_TOKEN not set; using the local BuildStream cache only" >&2
+    if [ -n "${GITHUB_ACTIONS:-}" ]; then
+        echo "::warning::BST_REMOTE_CACHE_TOKEN is not set; building without the shared remote cache"
+    fi
     exit 0
 fi
 

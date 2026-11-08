@@ -22,7 +22,9 @@
 set -euo pipefail
 
 : "${WINE_ROOT:?}" "${TARGET_SYSROOT:?}" "${OUTPUT_DIR:?}" "${ANDROID_NDK_HOME:?}" "${LLVM_MINGW_ROOT:?}"
-: "${WINE_COMMIT:?}" "${WINE_UPSTREAM_TAG:?}"
+: "${WINE_COMMIT:?}" "${WINE_UPSTREAM_TAG:?}" "${TARGET_TRIPLE:?}"
+# Everything in the archive is built for this API level, so it is the floor.
+min_sdk="${TARGET_TRIPLE##*android}"
 
 NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-0}"
@@ -82,7 +84,7 @@ cat > "$STAGE/amphora-runtime.json" <<JSON
   "format": 1,
   "name": "$name",
   "abi": "arm64-v8a",
-  "minSdk": 30,
+  "minSdk": $min_sdk,
   "wine": {
     "version": "$version",
     "commit": "$WINE_COMMIT",

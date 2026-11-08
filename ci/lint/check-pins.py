@@ -6,8 +6,9 @@ ci/wine.sh rather than project.conf, so a few facts are necessarily repeated:
 
 - the Wine commit: wine/wine.bst source `ref` == runtime.bst `WINE_COMMIT`
   (the runtime archive name and manifest are built from the latter);
-- the Android API level: project.conf `target-triple`, ci/wine.sh `TARGET`,
-  the meson cross file in project.conf, and `minSdk` in ci/runtime.sh.
+- the Android API level: project.conf `target-triple` and the meson cross
+  file next to it. Wine (ci/wine.sh) and the manifest's minSdk
+  (ci/runtime.sh) read `target-triple` through TARGET_TRIPLE.
 """
 from __future__ import annotations
 
@@ -51,8 +52,6 @@ def main() -> int:
         "project.conf meson cross file": re.search(
             r"meson-aarch64-android(\d+)\.ini", conf["elements"]["meson"]["variables"]["meson-global"]
         ).group(1),
-        "ci/wine.sh TARGET": grab("ci/wine.sh", r"^TARGET=aarch64-linux-android(\d+)\s*$"),
-        "ci/runtime.sh minSdk": grab("ci/runtime.sh", r'"minSdk":\s*(\d+)'),
     }
     if len(set(api.values())) != 1:
         errors.append("Android API levels differ: " + ", ".join(f"{k}={v}" for k, v in api.items()))

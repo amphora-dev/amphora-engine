@@ -28,19 +28,23 @@ set -euo pipefail
 : "${WINE_PREFIX:?BuildStream must provide WINE_PREFIX}"
 
 SRC="$PWD"
-OUT="$SRC/_amphora"
+# Build tree. Inside `bst build` it lives in the sandbox build dir (and is kept
+# as the element's buildtree); the dev loop (dev/wine.sh) points it outside.
+OUT="${AMPHORA_BUILD_DIR:-$SRC/_amphora}"
 TOOLS="$OUT/tools"
 BUILD="$OUT/wine"
 JOBS="${JOBS:-$(nproc)}"
-TARGET=aarch64-linux-android30
+# project.conf target-triple, passed in by wine/wine.bst.
+TARGET="${TARGET_TRIPLE:?BuildStream must provide TARGET_TRIPLE}"
 NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
 HOST_PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # --- recc (per-compile action cache through the sandbox remote-apis socket) ---
-# Active only when the element provides recc and RECC_SERVER; otherwise every
-# helper below is a no-op and the build is a plain local build.
+# Active only when the element provides recc and the socket is there (`bst shell`
+# has no remote-apis socket); otherwise every helper below is a no-op and the
+# build is a plain local build.
 RECC=""
-if command -v recc >/dev/null 2>&1 && [ -n "${RECC_SERVER:-}" ]; then
+if command -v recc >/dev/null 2>&1 && [ -n "${RECC_SERVER:-}" ] && [ -S "${RECC_SERVER#unix:}" ]; then
   RECC=recc
   RECC_WRAP="$OUT/recc-wrap"
   export RECC_LOG_LEVEL=info RECC_LOG_DIRECTORY=/tmp/recc-logs
