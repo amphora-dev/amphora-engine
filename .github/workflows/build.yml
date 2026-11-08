@@ -122,15 +122,16 @@ jobs:
         path: ${{ env.SNAPSHOT_DIR }}
         key: ${{ steps.export.outputs.key }}
 
-    # The 10 GB per-repository cache limit holds about two snapshots.
-    - name: Keep the newest two snapshots
+    # Restores only ever take the newest snapshot, and each one carries
+    # everything the next run needs, so older ones are dead weight.
+    - name: Keep only the newest snapshot
       if: always() && steps.save.outcome == 'success'
       env:
         GH_TOKEN: ${{ github.token }}
         GH_REPO: ${{ github.repository }}
       run: |
         gh cache list --ref refs/heads/main --key "$SNAPSHOT_PREFIX" --limit 100 \
-            --json id,createdAt --jq 'sort_by(.createdAt) | reverse | .[2:][]?.id' |
+            --json id,createdAt --jq 'sort_by(.createdAt) | reverse | .[1:][]?.id' |
           while read -r id; do
             [ -n "$id" ] && gh api --method DELETE "repos/$GH_REPO/actions/caches/$id"
           done
