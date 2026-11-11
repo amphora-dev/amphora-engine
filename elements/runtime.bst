@@ -29,7 +29,7 @@ environment:
   OUTPUT_DIR: "%{install-root}/artifacts"
   # Must match the git source ref of wine/wine.bst (BuildStream strips .git,
   # so the build cannot ask). ci/lint/check-pins.py enforces it.
-  WINE_COMMIT: 378407243a94290f5fc34eb93b53f0f22b1cee91
+  WINE_COMMIT: 280718371b092e3e994c6db69e7918d2c52afc00
   WINE_UPSTREAM_TAG: experimental-11.0-20261027b
 
 config:
