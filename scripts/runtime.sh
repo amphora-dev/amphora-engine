@@ -2,26 +2,31 @@
 # Package the device runtime archive the Amphora SDK installs
 # (element runtime.bst).
 #
-# Input: the Wine install tree (wine/wine.bst, staged at $WINE_ROOT) and the
-# target FreeType (libs/freetype.bst, staged at $TARGET_SYSROOT).
+# Input: the Wine install tree (wine/wine.bst, staged at $WINE_ROOT), FEX's
+# Wine modules (fex/fex.bst, at $FEX_ROOT) and the target FreeType
+# (libs/freetype.bst, staged at $TARGET_SYSROOT).
 # Output in $OUTPUT_DIR:
-#   amphora-wine-<version>-<commit12>.tar.gz   ustar, sorted, fixed mtime/owner
-#   amphora-wine-<version>-<commit12>.tar.gz.sha256
+#   <name>.tar.gz          ustar, sorted, fixed mtime/owner; <name> is
+#                          amphora-wine-<version>-<commit12>-fex-<fex commit7>
+#   <name>.tar.gz.sha256
 #   runtime.env                                 name/sha256/size for CI and manifests
 #
 # Archive layout (paths relative to the runtime root on the device):
 #   amphora-runtime.json          what this is, for the SDK installer
 #   bin/wineserver
 #   lib/libfreetype.so            on LD_LIBRARY_PATH
-#   lib/wine/aarch64-unix/        wine (loader), ntdll.so, ... (no preloader)
-#   lib/wine/aarch64-windows/     ARM64X PE files
+#   lib/wine/aarch64-unix/        wine (loader), ntdll.so, ... (no preloader),
+#                                 libarm64ecfex.so, libwow64fex.so
+#   lib/wine/aarch64-windows/     ARM64X PE files, libarm64ecfex.dll (x86_64),
+#                                 libwow64fex.dll (32-bit x86)
 #   lib/wine/i386-windows/        32-bit PE files (WoW64)
 #   share/wine/                   nls, fonts, wine.inf
+#   share/fex-emu/Config.json     FEX defaults (FEX_APP_CONFIG_LOCATION)
 # Executables need no exec bit on the device: the SDK and Wine start them
 # through /system/bin/linker64.
 set -euo pipefail
 
-: "${WINE_ROOT:?}" "${TARGET_SYSROOT:?}" "${OUTPUT_DIR:?}" "${ANDROID_NDK_HOME:?}" "${LLVM_MINGW_ROOT:?}"
+: "${WINE_ROOT:?}" "${FEX_ROOT:?}" "${TARGET_SYSROOT:?}" "${OUTPUT_DIR:?}" "${ANDROID_NDK_HOME:?}" "${LLVM_MINGW_ROOT:?}"
 : "${WINE_COMMIT:?}" "${WINE_UPSTREAM_TAG:?}" "${TARGET_TRIPLE:?}"
 # Everything in the archive is built for this API level, so it is the floor.
 min_sdk="${TARGET_TRIPLE##*android}"
@@ -36,6 +41,27 @@ cp -a "$WINE_ROOT/bin/wineserver" "$STAGE/bin/"
 cp -a "$WINE_ROOT/lib/wine" "$STAGE/lib/"
 cp -a "$WINE_ROOT/share/wine" "$STAGE/share/"
 cp -L "$TARGET_SYSROOT/usr/lib/libfreetype.so" "$STAGE/lib/libfreetype.so"
+for f in lib/wine/aarch64-windows/libarm64ecfex.dll lib/wine/aarch64-windows/libwow64fex.dll \
+         lib/wine/aarch64-unix/libarm64ecfex.so lib/wine/aarch64-unix/libwow64fex.so; do
+  cp "$FEX_ROOT/$f" "$STAGE/$f"
+done
+# Proton's FEX_Config.json at the tag the Wine follows: FEX's global defaults.
+# The SDK points FEX_APP_CONFIG_LOCATION here; per-game values go in FEX_APP_CONFIG.
+mkdir -p "$STAGE/share/fex-emu"
+cat > "$STAGE/share/fex-emu/Config.json" <<'JSON'
+{
+    "Config": {
+        "ProfileStats": "1",
+        "X87ReducedPrecision": "1",
+        "TSOEnabled": "1",
+        "VectorTSOEnabled": "0",
+        "MemcpySetTSOEnabled": "0",
+        "HalfBarrierTSOEnabled":"1",
+        "MaxInst": "500",
+        "Multiblock": "1"
+    }
+}
+JSON
 
 # Development-only files: import libraries for winegcc and Wine's own symlinks.
 find "$STAGE/lib/wine" -name '*.a' -delete
@@ -75,7 +101,10 @@ fi
 . "$WINE_ROOT/amphora-wine.env"
 version="${WINE_VERSION:?amphora-wine.env has no WINE_VERSION}"
 commit12="$(printf '%s' "$WINE_COMMIT" | cut -c1-12)"
-name="amphora-wine-${version}-${commit12}"
+# shellcheck source=/dev/null
+. "$FEX_ROOT/amphora-fex.env"
+: "${FEX_VERSION:?amphora-fex.env has no FEX_VERSION}" "${FEX_COMMIT:?amphora-fex.env has no FEX_COMMIT}"
+name="amphora-wine-${version}-${commit12}-fex-$(printf '%s' "$FEX_COMMIT" | cut -c1-7)"
 
 files="$(find "$STAGE" -type f | wc -l)"
 bytes="$(find "$STAGE" -type f -printf '%s\n' | awk '{ s += $1 } END { print s }')"
@@ -90,6 +119,10 @@ cat > "$STAGE/amphora-runtime.json" <<JSON
     "commit": "$WINE_COMMIT",
     "upstreamTag": "$WINE_UPSTREAM_TAG",
     "archs": ["aarch64", "arm64ec", "i386"]
+  },
+  "fex": {
+    "version": "$FEX_VERSION",
+    "commit": "$FEX_COMMIT"
   },
   "loader": "lib/wine/aarch64-unix/wine",
   "server": "bin/wineserver",
@@ -119,5 +152,7 @@ RUNTIME_FILES=$files
 RUNTIME_BYTES=$bytes
 WINE_VERSION=$version
 WINE_COMMIT=$WINE_COMMIT
+FEX_VERSION=$FEX_VERSION
+FEX_COMMIT=$FEX_COMMIT
 ENV
 echo "runtime: $archive ($size bytes, $files files, $bytes bytes unpacked, sha256 $sha)"

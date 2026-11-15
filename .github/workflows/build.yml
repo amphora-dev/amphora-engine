@@ -1,6 +1,6 @@
 # Build the device runtime archive (runtime.bst) and, on main, publish it as a
-# GitHub Release named after the archive (amphora-wine-<version>-<commit12>).
-# The name changes with the Wine commit; a build that only changes packaging
+# GitHub Release named after the archive (amphora-wine-<version>-<commit12>-fex-<commit7>).
+# The name changes with the Wine or FEX commit; a build that only changes packaging
 # replaces the assets of the existing Release.
 name: build
 

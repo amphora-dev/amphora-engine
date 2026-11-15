@@ -1,6 +1,6 @@
 # amphora-engine
 
-Amphora 引擎设备端运行时的构建项目：从源码构建 Wine（Valve Proton Experimental + 我们的补丁）和它在 Android 上要的原生库，打成 SDK 安装的 runtime 归档。只用 BuildStream 构建。
+Amphora 引擎设备端运行时的构建项目：从源码构建 Wine（Valve Proton Experimental + 我们的补丁）、x86 翻译器 FEX 和它们在 Android 上要的原生库，打成 SDK 安装的 runtime 归档。只用 BuildStream 构建。
 
 设计和进度在 [`amphora-dev/amphora`](https://github.com/amphora-dev/amphora)（本地 `~/co/github/amphora-steam`）：决策见其 `docs/research/12-REWRITE-DESIGN.md`，进度见 `docs/TRACKING.md`。旧产品（x86_64 Wine + Box64、imagefs rootfs、WCP 发布）的构建留在 [`amphora-dev/imagefs`](https://github.com/amphora-dev/imagefs)，不再开发；从那里搬什么、怎么改，见 [`docs/FROM-IMAGEFS.md`](docs/FROM-IMAGEFS.md)。
 
@@ -8,10 +8,10 @@ Amphora 引擎设备端运行时的构建项目：从源码构建 Wine（Valve P
 
 `runtime.bst` → `/artifacts/`：
 
-- `amphora-wine-<version>-<commit12>.tar.gz`：设备上的 runtime 根目录，带 `amphora-runtime.json`（SDK 安装器读这个）
+- `amphora-wine-<version>-<commit12>-fex-<FEX commit7>.tar.gz`：设备上的 runtime 根目录，带 `amphora-runtime.json`（SDK 安装器读这个）
 - 同名 `.sha256`，以及 `runtime.env`（名字、sha256、大小，给 CI 和 manifest 用）
 
-目标统一：aarch64 Bionic，**API 30**，16 KB 页；Wine 的 PE 侧是 ARM64X（aarch64 + arm64ec）+ i386。
+目标统一：aarch64 Bionic，**API 30**，16 KB 页；Wine 的 PE 侧是 ARM64X（aarch64 + arm64ec）+ i386。FEX 跟 Proton 走（Proton tag 里 `FEX` 子模块的提交），和 Proton 一样构建 `libarm64ecfex.dll`（64 位 x86）、`libwow64fex.dll`（32 位 x86）和它们的 unix 库，放在 Wine 的模块旁边；配置默认值是 Proton 的 `FEX_Config.json`（`share/fex-emu/Config.json`）。
 
 ## 元素
 
@@ -22,6 +22,8 @@ runtime.bst                 打包、strip、校验、写 manifest（scripts/run
 │   ├── wine/host-freetype  构建期工具 sfnt2fon 用的宿主 FreeType
 │   ├── libs/freetype.bst   目标 FreeType（Wine 只链它）
 │   └── tools/ccache.bst    ccache 和 ccache-cas：单次编译缓存（docs/CACHE.md）
+├── fex/fex.bst             FEX 的 Wine 模块（scripts/fex.sh），产物是 /opt/fex；
+│                           fex/patches/ 只有一个：unix 库在 Bionic 上没有 librt 和 shm_open
 ├── libs/freetype.bst
 └── sdk/toolchain.bst       stack：宿主 SDK + NDK r29 + llvm-mingw（换版本只改这里）
 buildstream-sdk.bst         junction：上面三样和 meson profile

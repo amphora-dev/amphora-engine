@@ -1,0 +1,46 @@
+diff --git a/Source/Windows/UnixLib/CMakeLists.txt b/Source/Windows/UnixLib/CMakeLists.txt
+index 37eda6a..5f65741 100644
+--- a/Source/Windows/UnixLib/CMakeLists.txt
++++ b/Source/Windows/UnixLib/CMakeLists.txt
+@@ -6,7 +6,10 @@ include(GNUInstallDirs)
+ function(CreateLib TargetName LibName)
+   add_library(${TargetName} SHARED FEXUnixLib.cpp)
+   set_target_properties(${TargetName} PROPERTIES OUTPUT_NAME ${LibName} PREFIX "lib" SUFFIX ".so")
+-  target_link_libraries(${TargetName} PRIVATE rt)
++  if (NOT ANDROID)
++    # Bionic has no librt; its functions are in libc.
++    target_link_libraries(${TargetName} PRIVATE rt)
++  endif()
+   install(TARGETS ${TargetName} LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Runtime)
+ endfunction()
+ 
+diff --git a/Source/Windows/UnixLib/FEXUnixLib.cpp b/Source/Windows/UnixLib/FEXUnixLib.cpp
+index 8adef59..9655cef 100644
+--- a/Source/Windows/UnixLib/FEXUnixLib.cpp
++++ b/Source/Windows/UnixLib/FEXUnixLib.cpp
+@@ -1,4 +1,5 @@
+ // SPDX-License-Identifier: MIT
++#include <cerrno>
+ #include <cstdint>
+ #include <type_traits>
+ #include <fcntl.h>
+@@ -76,6 +77,19 @@ static NTSTATUS FEXUnixLib_SetVMANameHandler(void* _Args) {
+            STATUS_INTERNAL_ERROR;
+ }
+ 
++#ifdef __ANDROID__
++// Bionic has no POSIX shared memory. The stats region only feeds FEXTop, which
++// does not exist on Android; the Windows side treats a failure as "no stats".
++static int shm_open(const char*, int, mode_t) {
++  errno = ENOSYS;
++  return -1;
++}
++static int shm_unlink(const char*) {
++  errno = ENOSYS;
++  return -1;
++}
++#endif
++
+ constexpr static int USER_PERMS = S_IRWXU | S_IRWXG | S_IRWXO;
+ static inline void* InitializeSHM(uint32_t MapSize, uint32_t MaxSize) {
+   void* Base {};

@@ -1,14 +1,17 @@
 kind: manual
 
 description: |
-  Device runtime archive for the Amphora SDK: the engine Wine plus FreeType,
-  stripped, with amphora-runtime.json. Output under /artifacts:
-  amphora-wine-<version>-<commit12>.tar.gz, its .sha256 and runtime.env.
+  Device runtime archive for the Amphora SDK: the engine Wine, FEX and
+  FreeType, stripped, with amphora-runtime.json. Output under /artifacts:
+  amphora-wine-<version>-<commit12>-fex-<commit7>.tar.gz, its .sha256 and
+  runtime.env.
 
 depends:
 - filename: sdk/toolchain.bst
   type: build
 - filename: wine/wine.bst
+  type: build
+- filename: fex/fex.bst
   type: build
 - filename: libs/freetype.bst
   type: build
@@ -26,6 +29,7 @@ environment:
   LLVM_MINGW_ROOT: /opt/llvm-mingw
   TARGET_SYSROOT: /opt/android-sysroot
   WINE_ROOT: /opt/wine
+  FEX_ROOT: /opt/fex
   OUTPUT_DIR: "%{install-root}/artifacts"
   # Must match the git source ref of wine/wine.bst (BuildStream strips .git,
   # so the build cannot ask). ci/lint/check-pins.py enforces it.
