@@ -7,7 +7,8 @@ scripts/wine.sh rather than project.conf, so a few facts are necessarily repeate
 - the Wine commit: wine/wine.bst source `ref` == runtime.bst `WINE_COMMIT`
   (the runtime archive name and manifest are built from the latter);
 - the FEX commit: fex/fex.bst source `ref` == its `FEX_COMMIT`, and
-  `FEX_DESCRIBE` names the same commit (…-g<commit7>);
+  `FEX_DESCRIBE` names the same commit (…-g<commit7>, or exactly the tag
+  the source tracks);
 - the Android API level: project.conf `target-triple` and the meson cross
   file next to it. Wine (scripts/wine.sh) and the manifest's minSdk
   (scripts/runtime.sh) read `target-triple` through TARGET_TRIPLE.
@@ -55,7 +56,10 @@ def main() -> int:
         errors.append("fex/fex.bst: expected exactly one git source")
     elif fex_git[0]["ref"] != fex_env["FEX_COMMIT"]:
         errors.append(f"FEX commit: fex/fex.bst ref {fex_git[0]['ref']} != FEX_COMMIT {fex_env['FEX_COMMIT']}")
-    elif not fex_env["FEX_DESCRIBE"].endswith("-g" + fex_env["FEX_COMMIT"][:7]):
+    elif not (
+        fex_env["FEX_DESCRIBE"].endswith("-g" + fex_env["FEX_COMMIT"][:7])
+        or fex_env["FEX_DESCRIBE"] == fex_git[0].get("track")
+    ):
         errors.append(f"FEX_DESCRIBE {fex_env['FEX_DESCRIBE']} is not commit {fex_env['FEX_COMMIT'][:7]}")
 
     conf = load("project.conf")

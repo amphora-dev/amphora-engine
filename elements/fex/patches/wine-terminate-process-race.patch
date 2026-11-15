@@ -1,0 +1,223 @@
+From 71444c94bf15460350bd06a4654bd03a1007a0b0 Mon Sep 17 00:00:00 2001
+From: Ryan Houdek <Sonicadvance1@gmail.com>
+Date: Fri, 13 Nov 2026 16:23:48 -0800
+Subject: [PATCH] WINE: Fixes race on TerminateProcess
+
+When a process calls `NtTerminateProcess`, FEX gets in a state where
+threads are ripped out from under itself. Due to how WINE implements
+this syscall, what happens is that SIGQUIT is sent to all the threads.
+These threads then die while holding various mutexes inside of FEX's
+code. For the threads that were unlucky enough to be in a WINE syscall
+handler and blocking the SIGQUIT signal, this means they continue trying
+to do some work.
+
+These remaining threads then call back in to FEX, hit some of these
+mutexes that are now dead and hang forever. There's no way to recover
+from this situation since those threads are completely gone already.
+
+Luckily for us, FEX is allowed to do a bit of work before and after
+`NtTerminateProcess`. So before the syscall actually fires, round up all
+of our threads and suspend them using the Suspend Doorbell mechanism.
+Once the threads are suspended we can then continue and let WINE SIGQUIT
+them, since at that point we know they're no longer holding any locks
+that could cause us to hang.
+
+Technically this still isn't a 100% sure-fire approach since other
+processes can call `NtTerminateProcess` on our process and WINE will
+happily SIGQUIT the process without notifying us. There's also the case
+that `NtTerminateThread` can do the same thing for a single thread. To
+solve all these cases we actually need WINE itself to completely rewrite
+how they do process shutdown in these instances and ensure to use the
+doorbell itself in all cases.
+
+The testcase for this was spinning on wine-mono's `delegate8.exe`
+unittest which would quickly hang on process shutdown. I just started up
+ten instances of this and let them spin for an hour to show they no
+longer hang with these changes.
+
+Fixes at least one spurious hang we've been having on process shutdown
+which is nice.
+---
+ Source/Windows/ARM64EC/Module.cpp | 59 ++++++++++++++++++++++++++++-
+ Source/Windows/WOW64/Module.cpp   | 62 +++++++++++++++++++++++++++++--
+ 2 files changed, 115 insertions(+), 6 deletions(-)
+
+diff --git a/Source/Windows/ARM64EC/Module.cpp b/Source/Windows/ARM64EC/Module.cpp
+index c9f0d7402..1d05ec7c1 100644
+--- a/Source/Windows/ARM64EC/Module.cpp
++++ b/Source/Windows/ARM64EC/Module.cpp
+@@ -138,7 +138,10 @@ struct ThreadCPUArea {
+ };
+ 
+ struct FrontendThreadData {
++  FEX::Windows::ScopedHandle ThreadHandle;
+   bool InLockedRWXRead {};
++  FrontendThreadData(FEX::Windows::ScopedHandle&& ThreadHandle)
++    : ThreadHandle {std::move(ThreadHandle)} {}
+ };
+ 
+ namespace {
+@@ -826,7 +829,58 @@ NTSTATUS ProcessInit() {
+   return STATUS_SUCCESS;
+ }
+ 
+-void ProcessTerm(HANDLE Handle, BOOL After, NTSTATUS Status) {}
++static void SuspendAllThreads() {
++  // Pulse suspending with lock to ensure threads exit.
++  const auto CurrentThread = GetCurrentThreadId();
++  while (true) {
++    bool AllSuspended = true;
++    {
++      // Hold the thread creation mutex so none are created while we're suspending.
++      std::scoped_lock Lock(ThreadCreationMutex);
++      for (auto& Thread : Threads) {
++        bool Self = Thread.first == CurrentThread;
++        if (Self) {
++          // Don't suspend self.
++          continue;
++        }
++
++        auto FrontendData = GetFrontendThreadData(Thread.second);
++        ULONG SuspendCount {};
++        RtlWow64SuspendThread(*FrontendData->ThreadHandle, &SuspendCount);
++
++        if (SuspendCount != 0) {
++          // This will wait for the thread to be suspended. Only execute if we know the thread /should/ be suspended.
++          // SuspendCount may saturate to max, but we don't care here.
++          CONTEXT TmpContext;
++          TmpContext.ContextFlags = CONTEXT_CONTROL;
++          NtGetContextThread(*FrontendData->ThreadHandle, &TmpContext);
++        } else {
++          // Wasn't suspended.
++          AllSuspended = false;
++        }
++      }
++    }
++
++    if (AllSuspended) {
++      // All threads suspended, free to continue.
++      break;
++    }
++
++    // Wait a second to let threads catch up.
++    std::this_thread::sleep_for(std::chrono::milliseconds(50));
++  }
++}
++
++void ProcessTerm(HANDLE Handle, BOOL After, NTSTATUS Status) {
++  if (After == false) {
++    // Someone called `NtTerminateProcess`. It is FEX's responsibility to spin down the threads in this moment.
++    // After we return from this, WINE will start indiscriminately killing threads with SIGQUIT.
++    // If we don't stop them now, then locks will be held by dead threads while the final process thread is trying to finish.
++    // This isn't 100% correct since another process calling `NtTerminateProcess` on our current process will SIGQUIT without warning.
++    // We need WINE patches to capture this properly.
++    SuspendAllThreads();
++  }
++}
+ 
+ class ScopedCallbackDisable {
+ private:
+@@ -1239,7 +1293,8 @@ NTSTATUS ThreadInit() {
+                             .AMD64_ControlWord = 0x27f};
+   Exception::LoadStateFromECContext(Thread, CPUArea.ContextAmd64().AMD64_Context);
+ 
+-  Thread->FrontendPtr = new FrontendThreadData();
++  Thread->FrontendPtr =
++    new FrontendThreadData(FEX::Windows::DupHandle(GetCurrentThread(), THREAD_QUERY_INFORMATION | THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT));
+ 
+   {
+     auto ThreadTID = GetCurrentThreadId();
+diff --git a/Source/Windows/WOW64/Module.cpp b/Source/Windows/WOW64/Module.cpp
+index b998af8d6..864f49edb 100644
+--- a/Source/Windows/WOW64/Module.cpp
++++ b/Source/Windows/WOW64/Module.cpp
+@@ -115,10 +115,12 @@ WOW64_CONTEXT* GetWow64Context() {
+ }
+ 
+ struct FrontendThreadData {
++  FEX::Windows::ScopedHandle ThreadHandle;
+   bool InLockedRWXRead {};
+   CHPE_V2_CPU_AREA_INFO CpuArea {};
+ 
+-  FrontendThreadData(const TLS& TLS) {
++  FrontendThreadData(const TLS& TLS, FEX::Windows::ScopedHandle&& ThreadHandle)
++    : ThreadHandle {std::move(ThreadHandle)} {
+     CpuArea.SuspendDoorbell = reinterpret_cast<ULONG*>(&TLS.ThreadState()->CurrentFrame->SuspendDoorbell);
+     TLS.CpuArea() = &CpuArea;
+   }
+@@ -641,7 +643,59 @@ void BTCpuProcessInit() {
+   }
+ }
+ 
+-void BTCpuProcessTerm(HANDLE Handle, BOOL After, ULONG Status) {}
++static void SuspendAllThreads() {
++  // Pulse suspending with lock to ensure threads exit.
++
++  const auto CurrentThread = GetCurrentThreadId();
++  while (true) {
++    bool AllSuspended = true;
++    {
++      // Hold the thread creation mutex so none are created while we're suspending.
++      std::scoped_lock Lock(ThreadCreationMutex);
++      for (auto& Thread : Threads) {
++        bool Self = Thread.first == CurrentThread;
++        if (Self) {
++          // Don't suspend self.
++          continue;
++        }
++
++        auto FrontendData = GetFrontendThreadData(Thread.second);
++        ULONG SuspendCount {};
++        RtlWow64SuspendThread(*FrontendData->ThreadHandle, &SuspendCount);
++
++        if (SuspendCount != 0) {
++          // This will wait for the thread to be suspended. Only execute if we know the thread /should/ be suspended.
++          // SuspendCount may saturate to max, but we don't care here.
++          CONTEXT TmpContext;
++          TmpContext.ContextFlags = CONTEXT_CONTROL;
++          NtGetContextThread(*FrontendData->ThreadHandle, &TmpContext);
++        } else {
++          // Wasn't suspended.
++          AllSuspended = false;
++        }
++      }
++    }
++
++    if (AllSuspended) {
++      // All threads suspended, free to continue.
++      break;
++    }
++
++    // Wait a second to let threads catch up.
++    std::this_thread::sleep_for(std::chrono::milliseconds(50));
++  }
++}
++
++void BTCpuProcessTerm(HANDLE Handle, BOOL After, ULONG Status) {
++  if (After == false) {
++    // Someone called `NtTerminateProcess`. It is FEX's responsibility to spin down the threads in this moment.
++    // After we return from this, WINE will start indiscriminately killing threads with SIGQUIT.
++    // If we don't stop them now, then locks will be held by dead threads while the final process thread is trying to finish.
++    // This isn't 100% correct since another process calling `NtTerminateProcess` on our current process will SIGQUIT without warning.
++    // We need WINE patches to capture this properly.
++    SuspendAllThreads();
++  }
++}
+ 
+ void BTCpuThreadInit() {
+   static constexpr size_t DefaultWow64CS {4};
+@@ -672,9 +726,9 @@ void BTCpuThreadInit() {
+   const auto TLS = GetTLS();
+   TLS.ThreadState() = Thread;
+ 
+-  Thread->FrontendPtr = new FrontendThreadData(TLS);
+-
+   auto ThreadTID = GetCurrentThreadId();
++  Thread->FrontendPtr = new FrontendThreadData(
++    TLS, FEX::Windows::DupHandle(GetCurrentThread(), THREAD_QUERY_INFORMATION | THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT));
+   Threads.emplace(ThreadTID, Thread);
+   if (StatAllocHandler) {
+     Thread->ThreadStats = StatAllocHandler->AllocateSlot(ThreadTID);
+-- 
+2.54.0 (Apple Git-157)
+
