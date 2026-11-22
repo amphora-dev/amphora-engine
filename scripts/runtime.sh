@@ -81,8 +81,10 @@ done
 
 # Files that lost their content: a local build once staged 481 i386 DLLs as
 # runs of zeros of the right size, and the strip loop above skips whatever is
-# neither ELF nor MZ. Nothing we ship is all zeros, and everything in the PE
-# directories (.dll, .exe, .sys, .tlb, ...; NE .fon files too) starts with MZ.
+# neither ELF nor MZ. Nothing we ship is all zeros, and everything Wine and FEX
+# install into the PE directories starts with MZ, data-only modules such as
+# .tlb included (fonts, NLS and other data go under share/). A file that is
+# meant to be there without being PE needs an exception in the case below.
 bad=/tmp/amphora-runtime.bad
 find "$STAGE" -type f -print0 | while IFS= read -r -d '' f; do
   rel="${f#"$STAGE"/}"
@@ -94,7 +96,7 @@ find "$STAGE" -type f -print0 | while IFS= read -r -d '' f; do
   case "$rel" in
     lib/wine/*-windows/*)
       if [ "$(head -c 2 "$f" | od -An -tx1 | tr -d ' \n')" != 4d5a ]; then
-        echo "$rel: no MZ header"
+        echo "$rel: no MZ header (not a PE file)"
       fi ;;
   esac
 done > "$bad"
