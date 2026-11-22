@@ -90,6 +90,8 @@ build() {
 #   <dir>/aarch64-windows/<file>       -> lib/wine/aarch64-windows/<file>
 #   <dir>/i386-windows/<file>          -> lib/wine/i386-windows/<file>
 #   loader/wine, server/wineserver     -> lib/wine/aarch64-unix/wine, bin/wineserver
+# Only these: Wine's modules and the two programs. Anything else the runtime
+# holds (FreeType, FEX, share/) is not built here.
 # Prints "<build path><TAB><runtime path>" for every such output, newer than $1 if given.
 outputs() {
   ( cd "$BUILD/wine" &&

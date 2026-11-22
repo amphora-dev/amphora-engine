@@ -35,7 +35,7 @@ in_vm "$ROOT/dev/wine.sh" collect "$OUT" "$@"
 bad=0
 while IFS= read -r -d '' f; do
   rel="${f#"$OUT"/}"
-  if ! LC_ALL=C grep -qa '[^\x00]' "$f"; then
+  if [ "$(LC_ALL=C tr -d '\000' < "$f" | head -c 1 | wc -c)" -eq 0 ]; then
     echo "$rel: all zero bytes" >&2; bad=1
   elif [[ "$rel" == lib/wine/*-windows/* ]] && [ "$(head -c 2 "$f")" != MZ ]; then
     echo "$rel: no MZ header" >&2; bad=1
@@ -45,9 +45,12 @@ done < <(find "$OUT" -type f -print0)
 
 adb shell "rm -rf $REMOTE"
 adb push "$OUT" "$REMOTE" | tail -n 1
+# The app's uid reads them from here; do not depend on the modes adb push gives.
+adb shell "chmod -R a+rX $REMOTE"
 # One runtime is installed at a time. Directories are sealed (no write
 # permission) and files read-only: open the directory, replace the file,
-# restore both. Mode 500 for what the loader maps or runs, 400 for PE files.
+# restore both. Modes as the installer leaves them under the app's umask:
+# 500 for what the loader maps or runs, 400 for PE files.
 adb shell "run-as $PACKAGE sh -e -c '
   set -- files/amphora/runtimes/*/
   test \$# -eq 1 -a -d \"\$1\" || { echo \"no single runtime installed in $PACKAGE\" >&2; exit 1; }
@@ -57,7 +60,7 @@ adb shell "run-as $PACKAGE sh -e -c '
     f=\"\${f#./}\"
     dir=\"\$OLDPWD/\$runtime\$(dirname \"\$f\")\"
     test -d \"\$dir\" || { echo \"\$f: no such directory in the runtime\" >&2; exit 1; }
-    case \"\$f\" in *-windows/*) mode=400 ;; *) mode=500 ;; esac
+    case \"\$f\" in lib/wine/*-windows/*) mode=400 ;; *) mode=500 ;; esac
     chmod u+w \"\$dir\"
     rm -f \"\$dir/\$(basename \"\$f\")\"
     cp \"\$f\" \"\$dir/\" && chmod \$mode \"\$dir/\$(basename \"\$f\")\"
