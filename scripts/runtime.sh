@@ -79,6 +79,32 @@ find "$STAGE" -type f -print0 | while IFS= read -r -d '' f; do
   esac
 done
 
+# Files that lost their content: a local build once staged 481 i386 DLLs as
+# runs of zeros of the right size, and the strip loop above skips whatever is
+# neither ELF nor MZ. Nothing we ship is all zeros, and everything in the PE
+# directories (.dll, .exe, .sys, .tlb, ...; NE .fon files too) starts with MZ.
+bad=/tmp/amphora-runtime.bad
+find "$STAGE" -type f -print0 | while IFS= read -r -d '' f; do
+  rel="${f#"$STAGE"/}"
+  size="$(stat -c%s "$f")"
+  if [ "$size" -gt 0 ] && cmp -s -n "$size" "$f" /dev/zero; then
+    echo "$rel: all zero bytes"
+    continue
+  fi
+  case "$rel" in
+    lib/wine/*-windows/*)
+      if [ "$(head -c 2 "$f" | od -An -tx1 | tr -d ' \n')" != 4d5a ]; then
+        echo "$rel: no MZ header"
+      fi ;;
+  esac
+done > "$bad"
+if [ -s "$bad" ]; then
+  echo "corrupt files in the runtime: $(wc -l < "$bad"), the first 20:" >&2
+  head -n 20 "$bad" >&2
+  exit 1
+fi
+rm -f "$bad"
+
 # 16 KB page devices: every ELF we ship needs 16 KB LOAD alignment (wine.sh
 # checks Wine's own; this covers the libraries next to it).
 find "$STAGE" -type f -print0 | while IFS= read -r -d '' f; do
