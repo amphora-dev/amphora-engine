@@ -4,6 +4,8 @@
 #
 #   dev/push.sh                              everything `dev/wine.sh changed` lists
 #   dev/push.sh lib/wine/aarch64-unix/win32u.so ...     just these (runtime paths)
+#   dev/push.sh --tree <dir>                 the files under <dir>, laid out as in
+#                                            the runtime (another element's build)
 #
 # Runs on the machine that has adb (the Mac); the build stays in the Linux VM,
 # reached through `orb` when this is not Linux. The app must be debuggable
@@ -28,7 +30,11 @@ in_vm() {
   if [ "$(uname -s)" = Linux ]; then "$@"; else orb -m "${AMPHORA_VM:-bst-amd64}" "$@"; fi
 }
 
-in_vm "$ROOT/dev/wine.sh" collect "$OUT" "$@"
+if [ "${1:-}" = --tree ]; then
+  OUT="$(cd "${2:?dev/push.sh --tree <dir>}" && pwd)"
+else
+  in_vm "$ROOT/dev/wine.sh" collect "$OUT" "$@"
+fi
 
 # A local build once produced PE files that were all zeros (scripts/runtime.sh
 # has the same check for releases).
@@ -58,8 +64,14 @@ adb shell "run-as $PACKAGE sh -e -c '
   cd $REMOTE
   find . -type f | while read -r f; do
     f=\"\${f#./}\"
-    dir=\"\$OLDPWD/\$runtime\$(dirname \"\$f\")\"
-    test -d \"\$dir\" || { echo \"\$f: no such directory in the runtime\" >&2; exit 1; }
+    dir=\"\$OLDPWD/\${runtime%/}\"
+    # a directory the installed runtime does not have yet (a new component): sealed like the rest
+    for part in \$(dirname \"\$f\" | tr / \" \"); do
+      if ! test -d \"\$dir/\$part\"; then
+        chmod u+w \"\$dir\"; mkdir \"\$dir/\$part\"; chmod u-w \"\$dir\"; chmod 500 \"\$dir/\$part\"
+      fi
+      dir=\"\$dir/\$part\"
+    done
     case \"\$f\" in lib/wine/*-windows/*) mode=400 ;; *) mode=500 ;; esac
     chmod u+w \"\$dir\"
     rm -f \"\$dir/\$(basename \"\$f\")\"
