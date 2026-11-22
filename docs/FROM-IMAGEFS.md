@@ -30,12 +30,11 @@
 | fontconfig | `text/fontconfig.bst` | 需要找系统字体时；Wine 现在 `--without-fontconfig` | 可能用不上 |
 | SDL2 | `media/sdl2.bst` | 手柄方案定了以后（winebus） | 输入可能改由宿主转发，到时再定 |
 | 音频 | `audio/alsa-lib.bst`、`alsa-android-aserver.bst` | 音频方案定了以后 | 新设计倾向宿主侧 AAudio，ALSA 不一定要 |
-| vulkan-headers、vulkan-loader | `graphics/*` | M3 | M3 决定 Wine 直接加载 Turnip 还是经 loader |
-| DXVK | `l1/dxvk-wcp.bst`、`ci/dxvk/` | M3 | ARM64X + i386；版本按 Proton tag（Experimental：`a78a467ca`）；不带 gplasync，也不带 Sarek；不打 WCP |
-| vkd3d-proton | `l1/vkd3d-wcp.bst`、`ci/vkd3d/` | M3 | 同上（`cae2e003b`） |
-| Mesa WGL（Zink） | `l1/mesa-wgl.bst`、`ci/mesa-wgl/` | M3 | 改成 arm64ec + i386 PE |
-| glslang（宿主） | `host/glslang.bst` | 跟 DXVK / vkd3d 一起 | 无 |
-| Turnip | 不在 imagefs（`amphora-turnip`） | M3 | 改成普通 Vulkan ICD（D14 相关，12 §3.1） |
+| DXVK | `l1/dxvk-wcp.bst`、`ci/dxvk/` | **已搬（M3）**：`dxvk/dxvk.bst` | ARM64EC + i386（ARM64X 要 Valve 的 llvm-mingw，见 README）；版本按 Proton tag（`a78a467`）；不带 gplasync，也不带 Sarek；不打 WCP |
+| vkd3d-proton | `l1/vkd3d-wcp.bst`、`ci/vkd3d/` | **已搬（M3）**：`vkd3d-proton/vkd3d-proton.bst` | 同上（`cae2e00`） |
+| glslang（宿主） | `host/glslang.bst` | **已搬（M3）**：`tools/glslang.bst`（Proton 钉的版本，从源码）、`mesa/glslang.bst`（Mesa 要更新的） | 不再用发布的二进制 |
+| Turnip | `l1/turnip.bst`（`wip/turnip-build` 分支） | **已搬（M3）**：`mesa/turnip.bst` | 不打 adrenotools 包：Wine 的显示驱动直接打开这个 HAL 模块。Mesa 26.3.1 已带 MR 44838，只剩 gralloc 一个补丁 |
+| Mesa WGL（Zink） | `l1/mesa-wgl.bst`、`ci/mesa-wgl/` | OpenGL 要做的时候 | 改成 arm64ec + i386 PE |
 
 ## 不搬
 
@@ -43,8 +42,9 @@
 |---|---|
 | `l1/box64-wcp.bst`、`vendor/box64-patches` | D5：不要 Box64 |
 | `l1/wrapper-tzst.bst`、`vendor/wrapper-patches`、`graphics/mesa-gl.bst`、`vendor/mesa-gl-patches` | 不要 wrapper / adrenotools；原生 Bionic GL 是给 X11 路径用的 |
+| `graphics/vulkan-headers.bst`、`vulkan-loader.bst` | 不要 loader：Wine 的显示驱动直接打开 Turnip（12 §3.1），DXVK 和 vkd3d-proton 自带头文件 |
 | `l1/proton-wine-wcp.bst`、`wine/x86_64/*`、`wine/sysroot-x86_64.bst`、`wine/prefix-pack-x86_64.bst`、`vendor/proton-prefix` | x86_64 Wine；前缀改为薄前缀模板（D13） |
-| `l1/dxvk-d3d89-wcp.bst` | 只是绕开高通系统驱动不认固定功能着色器的问题；新设计默认 Turnip。M3 矩阵真复现了再加 |
+| `l1/dxvk-d3d89-wcp.bst` | 只是绕开高通系统驱动不认固定功能着色器的问题；runtime 只用 Turnip，M3 矩阵里 dx8 / dx9 在它上面正常 |
 | `x11/*` | 没有 X，出画走 wineandroid.drv |
 | `android/*`（sysvshm、shmem、spawn、sysv-semaphore、libcxx-shared） | 给旧 rootfs 里的程序补 libc 缺口；新 Wine 没用到。哪个库真要了再说 |
 | `imagefs/*`、`tests/*`、`recipes/`、`sync-arch-elements.py` | rootfs 打包和双 ABI 同步 |

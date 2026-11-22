@@ -9,6 +9,10 @@ scripts/wine.sh rather than project.conf, so a few facts are necessarily repeate
 - the FEX commit: fex/fex.bst source `ref` == its `FEX_COMMIT`, and
   `FEX_DESCRIBE` names the same commit (…-g<commit7>, or exactly the tag
   the source tracks);
+- the DXVK and vkd3d-proton commits: each element's source `ref` == its
+  `DXVK_COMMIT` / `VKD3D_COMMIT` (the runtime's manifest and name are built
+  from them), and the version strings written next to them name that commit;
+- the Mesa version: mesa/turnip.bst's tarball == its `MESA_VERSION`;
 - the Android API level: project.conf `target-triple` and the meson cross
   file next to it. Wine (scripts/wine.sh) and the manifest's minSdk
   (scripts/runtime.sh) read `target-triple` through TARGET_TRIPLE.
@@ -62,6 +66,28 @@ def main() -> int:
     ):
         errors.append(f"FEX_DESCRIBE {fex_env['FEX_DESCRIBE']} is not commit {fex_env['FEX_COMMIT'][:7]}")
 
+    for rel, commit_var, version_vars in (
+        ("elements/dxvk/dxvk.bst", "DXVK_COMMIT", ("DXVK_DESCRIBE",)),
+        ("elements/vkd3d-proton/vkd3d-proton.bst", "VKD3D_COMMIT", ("VKD3D_BUILD", "VKD3D_DESCRIBE")),
+    ):
+        element = load(rel)
+        env = element["environment"]
+        # The first git source is the project; the others are nested submodules.
+        ref = next(s["ref"] for s in element["sources"] if s.get("kind") == "git")
+        if ref != env[commit_var]:
+            errors.append(f"{rel}: ref {ref} != {commit_var} {env[commit_var]}")
+        for var in version_vars:
+            # `git describe` output: ends in the abbreviated commit, after -g when there is a tag.
+            abbrev = env[var].rsplit("-g", 1)[-1]
+            if len(abbrev) < 7 or not ref.startswith(abbrev):
+                errors.append(f"{rel}: {var} {env[var]} is not commit {ref[:12]}")
+
+    turnip = load("elements/mesa/turnip.bst")
+    mesa = turnip["environment"]["MESA_VERSION"]
+    tarball = next(s["url"] for s in turnip["sources"] if s.get("kind") == "tar")
+    if tarball != f"mesa:mesa-{mesa}.tar.xz":
+        errors.append(f"mesa/turnip.bst: source {tarball} is not Mesa {mesa}")
+
     conf = load("project.conf")
     api = {
         "project.conf target-triple": grab("project.conf", r"^\s*target-triple:\s*aarch64-linux-android(\d+)\s*$"),
@@ -75,7 +101,10 @@ def main() -> int:
     if errors:
         print("\n".join(errors), file=sys.stderr)
         return 1
-    print(f"pins consistent (Wine {git[0]['ref'][:12]}, FEX {fex_env['FEX_COMMIT'][:7]}, API {next(iter(api.values()))})")
+    print(
+        f"pins consistent (Wine {git[0]['ref'][:12]}, FEX {fex_env['FEX_COMMIT'][:7]}, "
+        f"Mesa {mesa}, API {next(iter(api.values()))})"
+    )
     return 0
 
 

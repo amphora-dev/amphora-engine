@@ -1,7 +1,9 @@
 # Build the device runtime archive (runtime.bst) and, on main, publish it as a
-# GitHub Release named after the archive (amphora-wine-<version>-<commit12>-fex-<commit7>).
-# The name changes with the Wine or FEX commit; a build that only changes packaging
-# replaces the assets of the existing Release.
+# GitHub Release named after the archive
+# (amphora-wine-<version>-<commit12>-fex-<commit7>-gfx-<graphics8>).
+# The name changes with the Wine or FEX commit and with the DXVK, vkd3d-proton
+# or Mesa version; a build that only changes packaging replaces the assets of
+# the existing Release.
 name: build
 
 on:
@@ -178,6 +180,7 @@ jobs:
         GH_REPO: ${{ github.repository }}
       run: |
         notes="Wine ${WINE_VERSION}, amphora-dev/proton-wine@${WINE_COMMIT}
+        ${FEX_VERSION}, DXVK ${DXVK_VERSION}, vkd3d-proton ${VKD3D_VERSION}, Mesa ${MESA_VERSION} (Turnip)
         Built from ${GITHUB_SHA}. sha256 ${RUNTIME_SHA256}, ${RUNTIME_FILES} files, ${RUNTIME_BYTES} bytes unpacked."
         files=(out/runtime/artifacts/*)
         if gh release view "$RUNTIME_NAME" >/dev/null 2>&1; then

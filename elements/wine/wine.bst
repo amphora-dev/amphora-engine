@@ -37,7 +37,7 @@ sources:
 - kind: git
   url: amphora:proton-wine.git
   track: amphora/exp-11.0-20261027b
-  ref: 280718371b092e3e994c6db69e7918d2c52afc00
+  ref: 770268ec7af9817b4afe2c22e3226e970e69da59
   checkout-submodules: false
 
 environment:
