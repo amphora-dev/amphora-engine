@@ -63,7 +63,10 @@ projects:
 dev/wine.sh build     # 在 wine.bst 自己的构建沙箱里增量编译；源码默认是旁边的 ../wine-arm64ec（WINE_SRC 可改）
 dev/wine.sh mark      # 记下时间点
 dev/wine.sh changed   # 列出之后变了的、要推到设备上的文件
+dev/push.sh           # 在有 adb 的机器（Mac）上跑：把这些文件换进设备上已装的 runtime；也可以只给几个 runtime 路径
 ```
+
+`dev/push.sh` 只用于开发：换过文件的 runtime 不再对应任何配方，要回到发布版就在 App 的系统页重装 runtime。它在推之前检查文件不是全零、PE 文件有 MZ 头（本地 `bst build` 出过内容全零的 i386 PE 文件，见 amphora-steam 的 `docs/TRACKING.md`）。
 
 它把 `WINE_SRC` 同步到 `~/.cache/amphora-dev/wine/src`，构建树在旁边的 `build/`，ccache 目录在 `ccache/`；每次构建前先并入最近一次 `bst build` 存下的 ccache（同一份只并一次），所以第一次也几乎全部命中。之后改一个 `.c` 约 10 秒。要先 `./bst build runtime.bst` 一次（或 `ci/cache/pull-ci.sh`），让 wine.bst 的构建依赖都在缓存里。
 

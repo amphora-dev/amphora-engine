@@ -15,6 +15,9 @@
 #   dev/wine.sh build      sync $WINE_SRC into the copy, then scripts/wine.sh build
 #   dev/wine.sh changed    built files newer than the last `mark`, as runtime paths
 #   dev/wine.sh mark       remember "now" for `changed`
+#   dev/wine.sh collect <dir> [runtime path...]
+#                          copy those outputs (default: what `changed` lists)
+#                          into <dir>, laid out as in the runtime (dev/push.sh)
 #
 # Not a release path: nothing here is cached or reproducible. Anything that
 # leaves this machine is built with `./bst build runtime.bst`.
@@ -87,23 +90,50 @@ build() {
 #   <dir>/aarch64-windows/<file>       -> lib/wine/aarch64-windows/<file>
 #   <dir>/i386-windows/<file>          -> lib/wine/i386-windows/<file>
 #   loader/wine, server/wineserver     -> lib/wine/aarch64-unix/wine, bin/wineserver
+# Prints "<build path><TAB><runtime path>" for every such output, newer than $1 if given.
+outputs() {
+  ( cd "$BUILD/wine" &&
+    find dlls programs loader server -type f ${1:+-newer "$1"} \
+      \( -name '*.so' -o -path '*-windows/*' -o -path loader/wine -o -path server/wineserver \) \
+      ! -name '*.o' ! -name '*.a' ! -name '*.spec.*' ! -name '*.fake' 2>/dev/null ) |
+    sed -e 's#^server/wineserver$#&\tbin/wineserver#' \
+        -e 's#^loader/wine$#&\tlib/wine/aarch64-unix/wine#' \
+        -e 's#^.*/\(aarch64-windows\|i386-windows\)/\([^/]*\)$#&\tlib/wine/\1/\2#' \
+        -e 's#^\(dlls\|programs\)/.*/\([^/]*\.so\)$#&\tlib/wine/aarch64-unix/\2#' |
+    grep -P '\t(bin|lib)/' | sort -t "$(printf '\t')" -k2 -u
+}
+
 changed() {
   local stamp="$STATE/mark"
   test -f "$stamp" || { echo "no mark yet; run: dev/wine.sh mark" >&2; exit 1; }
-  ( cd "$BUILD/wine" &&
-    find dlls programs loader server -type f -newer "$stamp" \
-      \( -name '*.so' -o -path '*-windows/*' -o -path loader/wine -o -path server/wineserver \) \
-      ! -name '*.o' ! -name '*.a' ! -name '*.spec.*' ! -name '*.fake' 2>/dev/null ) |
-    sed -e 's#^server/wineserver$#bin/wineserver#' \
-        -e 's#^loader/wine$#lib/wine/aarch64-unix/wine#' \
-        -e 's#^.*/\(aarch64-windows\|i386-windows\)/\([^/]*\)$#lib/wine/\1/\2#' \
-        -e 's#^\(dlls\|programs\)/.*/\([^/]*\.so\)$#lib/wine/aarch64-unix/\2#' |
-    grep '^\(bin\|lib\)/' | sort -u
+  outputs "$stamp" | cut -f2
+}
+
+# Copies outputs into <dir>, laid out as in the runtime: the ones named as
+# runtime paths, or everything `changed` lists. dev/push.sh sends <dir> to the device.
+collect() {
+  local out="${1:?usage: dev/wine.sh collect <dir> [runtime path...]}" from to n=0
+  shift
+  local want
+  want="$(if [ $# -gt 0 ]; then printf '%s\n' "$@"; else changed; fi)"
+  rm -rf "$out"
+  mkdir -p "$out"
+  while IFS="$(printf '\t')" read -r from to; do
+    grep -qxF "$to" <<<"$want" || continue
+    mkdir -p "$out/$(dirname "$to")"
+    cp "$BUILD/wine/$from" "$out/$to"
+    n=$((n + 1))
+  done < <(outputs)
+  local missing
+  missing="$(grep -vxFf <(cd "$out" && find . -type f | sed 's#^\./##') <<<"$want" || true)"
+  if [ -n "$missing" ]; then echo "not built: $missing" >&2; exit 1; fi
+  echo "dev/wine.sh: $n files in $out"
 }
 
 case "${1:-}" in
   build) build ;;
   changed) changed ;;
   mark) mkdir -p "$STATE" && touch "$STATE/mark" ;;
-  *) echo "usage: $0 build|changed|mark" >&2; exit 2 ;;
+  collect) shift; collect "$@" ;;
+  *) echo "usage: $0 build|changed|mark|collect <dir> [runtime path...]" >&2; exit 2 ;;
 esac

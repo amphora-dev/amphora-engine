@@ -20,6 +20,7 @@ Wine 源码在 `../wine-arm64ec`（分支 `amphora/exp-11.0-20261027b`）。日�
 orb -m bst-amd64 dev/wine.sh mark
 orb -m bst-amd64 dev/wine.sh build     # 增量编译，改一个 .c 约 10 秒
 orb -m bst-amd64 dev/wine.sh changed   # 要推到设备上的文件
+ANDROID_SERIAL=HA262AAH dev/push.sh    # 在 Mac 上跑：把它们换进设备上已装的 runtime（只用于开发）
 ```
 
 要先 `./bst build runtime.bst` 或 `ci/cache/pull-ci.sh` 一次。Wine 的提交信息照上游风格写（`ntdll: Do X.`）；推到 `amphora-dev/proton-wine` 之前，本地构建要靠 `~/.config/buildstream.conf` 里的本地镜像（见 README）。
@@ -33,8 +34,12 @@ orb -m bst-amd64 dev/wine.sh changed   # 要推到设备上的文件
 ## 检查（同 `.github/workflows/lint.yml`）
 
 ```bash
-shellcheck -S warning $(git ls-files '*.sh')
-python3 ci/lint/check-bst-inline-sh.py
+mapfile -t scripts < <(find . -name '*.sh' -not -path './.git/*' | sort)
+shellcheck -S warning -f gcc "${scripts[@]}"
+find . -name '*.sh' -not -path './.git/*' -print0 | xargs -0 -n1 bash -n
+find . -name '*.py' -not -path './.git/*' -print0 | xargs -0 python3 -m py_compile
+test -x bst
+python3 ci/lint/check-bst-inline-sh.py   # 要 pyyaml
 python3 ci/lint/check-pins.py
 ```
 
