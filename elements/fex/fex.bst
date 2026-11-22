@@ -1,11 +1,12 @@
 kind: manual
 
 description: |
-  FEX, the x86 translator Wine loads on ARM64: release FEX-2611.1 plus one
-  fix from main (patches/). Proton's tag experimental-11.0-20261027b pins
-  1c4f04b (FEX-2610-101); 2611.1 adds Windows fixes on top of it (forced
-  assert, CPUID crash, disk cache hash) and is what GameNative and
-  Winlator-Ludashi ship.
+  FEX, the x86 translator Wine loads on ARM64, at the commit Proton pins for
+  the Wine tag we follow (Proton experimental-11.0-20261027b, submodule FEX:
+  1c4f04b, FEX-2610-101). Nothing newer and no fixes from FEX's main on top:
+  what runs here is what runs on Steam, so a problem can be compared with
+  one there. A fix goes in as a patch once a test on the device shows the
+  problem it fixes.
   Builds libarm64ecfex.dll (x86_64), libwow64fex.dll (32-bit x86) and their
   unix libraries; scripts/fex.sh.
 
@@ -19,8 +20,8 @@ depends:
 sources:
 - kind: git
   url: github:FEX-Emu/FEX.git
-  track: FEX-2611.1
-  ref: 4f9c1f1e36443d22d7655477e34f51b95b685bf1
+  track: main
+  ref: 1c4f04b71a4d33091183fd7e1a2c09e6823d27fd
   # Only what the mingw build compiles; the rest (tests, thunks, the glibc
   # allocator, profilers, disassemblers) is not fetched.
   checkout-submodules: false
@@ -47,10 +48,6 @@ sources:
 # region; the Windows side runs without it).
 - kind: patch
   path: elements/fex/patches/unixlib-android.patch
-# Upstream 71444c9 (main, after 2611.1): threads killed by Wine's
-# NtTerminateProcess left FEX mutexes held, and the process hung on exit.
-- kind: patch
-  path: elements/fex/patches/wine-terminate-process-race.patch
 - kind: local
   path: scripts/fex.sh
   directory: .bst/scripts
@@ -65,8 +62,8 @@ environment:
   # Must match the git source ref (BuildStream strips .git, so the build
   # cannot ask). ci/lint/check-pins.py enforces it. FEX_DESCRIBE is
   # `git describe --abbrev=7` of that commit, what Proton passes to FEX.
-  FEX_COMMIT: 4f9c1f1e36443d22d7655477e34f51b95b685bf1
-  FEX_DESCRIBE: FEX-2611.1
+  FEX_COMMIT: 1c4f04b71a4d33091183fd7e1a2c09e6823d27fd
+  FEX_DESCRIBE: FEX-2610-101-g1c4f04b
 
 environment-nocache:
 - JOBS

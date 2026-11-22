@@ -11,7 +11,7 @@ Amphora 引擎设备端运行时的构建项目：从源码构建 Wine（Valve P
 - `amphora-wine-<version>-<commit12>-fex-<FEX commit7>-gfx-<graphics8>.tar.gz`：设备上的 runtime 根目录，带 `amphora-runtime.json`（SDK 安装器读这个）。`<graphics8>` 是 DXVK commit、vkd3d-proton commit、Mesa 版本和补丁合起来的哈希：Release 以归档名命名，配方按名字和 sha256 钉住它，所以内容变了名字就得变
 - 同名 `.sha256`，以及 `runtime.env`（名字、sha256、大小，给 CI 和 manifest 用）
 
-目标统一：aarch64 Bionic，**API 30**，16 KB 页；Wine 的 PE 侧是 ARM64X（aarch64 + arm64ec）+ i386。FEX 用正式发布版（现在是 FEX-2611.1，比 Proton tag 里钉的 `1c4f04b` 多了几处 Windows 修复，另带一个 main 上的修复），和 Proton 一样构建 `libarm64ecfex.dll`（64 位 x86）、`libwow64fex.dll`（32 位 x86）和它们的 unix 库，放在 Wine 的模块旁边；配置默认值是 Proton 的 `FEX_Config.json`（`share/fex-emu/Config.json`）。
+目标统一：aarch64 Bionic，**API 30**，16 KB 页；Wine 的 PE 侧是 ARM64X（aarch64 + arm64ec）+ i386。FEX 用 Proton tag 里钉的提交（`1c4f04b`，FEX-2610-101），不用更新的发布版，也不另带上游的修复：跑的和 Steam 上的是同一份，出了问题才能直接对照；要带哪个修复，等设备上测到它修的问题再加。和 Proton 一样构建 `libarm64ecfex.dll`（64 位 x86）、`libwow64fex.dll`（32 位 x86）和它们的 unix 库，放在 Wine 的模块旁边；配置默认值是 Proton 的 `FEX_Config.json`（`share/fex-emu/Config.json`）。
 
 图形栈（都在 runtime 里，SDK 不再单独下载任何东西）：
 
@@ -28,8 +28,7 @@ runtime.bst                 打包、strip、校验、写 manifest（scripts/run
 │   ├── libs/freetype.bst   目标 FreeType（Wine 只链它）
 │   └── tools/ccache.bst    ccache 和 ccache-cas：单次编译缓存（docs/CACHE.md）
 ├── fex/fex.bst             FEX 的 Wine 模块（scripts/fex.sh），产物是 /opt/fex；
-│                           fex/patches/：unix 库在 Bionic 上没有 librt 和 shm_open；
-│                           上游 main 的 71444c9（进程退出时卡死）
+│                           fex/patches/：unix 库在 Bionic 上没有 librt 和 shm_open
 ├── dxvk/dxvk.bst           DXVK（scripts/d3d.sh），产物是 /opt/dxvk
 ├── vkd3d-proton/vkd3d-proton.bst   vkd3d-proton（同一个脚本），产物是 /opt/vkd3d-proton
 │   └── tools/glslang.bst   Proton tag 钉的 glslang（宿主工具），两者编译着色器用
