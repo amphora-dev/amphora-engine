@@ -171,7 +171,7 @@ configure_flags=(
   --without-inotify --without-krb5 --without-netapi --without-opencl --without-oss
   --without-pcap --without-pcsclite --without-piper --without-pulse --without-sane
   --without-sdl --without-udev --without-unwind --without-usb --without-v4l2
-  --without-vosk --without-vulkan --without-wayland --without-x
+  --without-vosk --with-vulkan --without-wayland --without-x
 )
 
 target_env() {
