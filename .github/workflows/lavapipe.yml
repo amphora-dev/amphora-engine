@@ -1,0 +1,73 @@
+# Experimental build of Mesa 26.3.1 Lavapipe (software Vulkan Android HAL)
+# with static Android aarch64 LLVM 20.1.8 and static libdrm.
+# Runs only on the exp/lavapipe branch or manual dispatch; never touches main
+# releases or runtime.bst.
+name: lavapipe
+
+on:
+  push:
+    branches: [exp/lavapipe]
+  workflow_dispatch:
+
+concurrency:
+  group: lavapipe-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SNAPSHOT_PREFIX: bst-lavapipe-v1-
+  SNAPSHOT_DIR: ~/.cache/amphora-lavapipe-snapshot
+
+jobs:
+  lavapipe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: ./.github/actions/setup-buildstream
+
+    - name: Snapshot key
+      id: key
+      run: echo "key=${SNAPSHOT_PREFIX}$(./bst --no-colors show --deps none --format '%{full-key}' mesa/lavapipe.bst)" >> "$GITHUB_OUTPUT"
+
+    - name: Restore snapshot
+      id: restore
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ env.SNAPSHOT_DIR }}
+        key: ${{ steps.key.outputs.key }}
+        restore-keys: ${{ env.SNAPSHOT_PREFIX }}
+
+    - name: Import snapshot
+      if: steps.restore.outputs.cache-matched-key != ''
+      run: bash ci/cache/snapshot.sh import "$SNAPSHOT_DIR"
+
+    - name: Build Lavapipe
+      run: |
+        ./bst build mesa/lavapipe.bst
+        rm -rf out/lavapipe
+        ./bst artifact checkout mesa/lavapipe.bst --directory out/lavapipe
+        cat out/lavapipe/opt/lavapipe/lavapipe-info.txt | tee -a "$GITHUB_STEP_SUMMARY"
+
+    - name: Export snapshot
+      id: export
+      if: steps.restore.outputs.cache-hit != 'true'
+      run: bash ci/cache/snapshot.sh export "$SNAPSHOT_DIR"
+
+    - name: Save snapshot
+      if: steps.export.outcome == 'success'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ env.SNAPSHOT_DIR }}
+        key: ${{ steps.key.outputs.key }}
+
+    - name: Upload Lavapipe artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: mesa-lavapipe-android-arm64
+        path: |
+          out/lavapipe/opt/lavapipe/lib/libvulkan_lvp.so
+          out/lavapipe/opt/lavapipe/lib/vulkan.lvp.so
+          out/lavapipe/opt/lavapipe/lavapipe-info.txt
+        if-no-files-found: error
+        retention-days: 14
