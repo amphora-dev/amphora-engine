@@ -64,11 +64,17 @@ build() {
 
 install_tree() {
   : "${INSTALL_ROOT:?}"
-  DESTDIR="$INSTALL_ROOT" cmake --install "$OUT/build" --component llvm-libraries
-  DESTDIR="$INSTALL_ROOT" cmake --install "$OUT/build" --component llvm-headers
+  # In LLVM's CMake, each library has its own install component, while
+  # `install-llvm-libraries` and `install-llvm-headers` are umbrella targets.
+  DESTDIR="$INSTALL_ROOT" cmake --build "$OUT/build" --target install-llvm-libraries install-llvm-headers
 
   local root="$INSTALL_ROOT$LLVM_PREFIX"
   mkdir -p "$root/bin"
+  test -f "$root/lib/libLLVMAArch64CodeGen.a" || {
+    echo "missing installed LLVM static libraries under $root/lib" >&2
+    ls -la "$root/lib" >&2 || true
+    exit 1
+  }
   test -x "$OUT/build/NATIVE/bin/llvm-config" || {
     echo "missing NATIVE/bin/llvm-config" >&2
     exit 1
@@ -86,6 +92,7 @@ PREFIX="\$(dirname "\$SELF_DIR")"
 RAW="\$SELF_DIR/llvm-config-raw"
 
 args=()
+want_libs=0
 want_system_libs=0
 want_ldflags=0
 want_cppflags=0
@@ -96,6 +103,7 @@ want_host_target=0
 for a in "\$@"; do
   case "\$a" in
     native) args+=(aarch64) ;;
+    --libs) want_libs=1; args+=("\$a") ;;
     --system-libs) want_system_libs=1; args+=("\$a") ;;
     --ldflags) want_ldflags=1; args+=("\$a") ;;
     --cppflags) want_cppflags=1; args+=("\$a") ;;
@@ -106,8 +114,8 @@ for a in "\$@"; do
   esac
 done
 
-# Single-flag overrides for target-specific queries.
-if [ "\$#" -eq 1 ]; then
+# Target-specific queries (Meson may combine these with --link-static).
+if [ "\$want_libs" -eq 0 ]; then
   if [ "\$want_system_libs" -eq 1 ]; then
     echo "-lm -ldl -lz"
     exit 0
@@ -130,9 +138,9 @@ if [ "\$#" -eq 1 ]; then
 fi
 
 out="\$("\$RAW" "\${args[@]}")"
-# Strip host-only system libraries when --system-libs is combined with other flags.
 if [ "\$want_system_libs" -eq 1 ]; then
-  out="\$(printf '%s\n' "\$out" | sed -E 's/(^| )-l(rt|pthread|tinfo|zstd|xml2|edit|curses|ncurses)( |\$)/ /g')"
+  # Filter host-only libs word-by-word so adjacent flags are never missed.
+  out="\$(printf '%s\n' "\$out" | tr ' ' '\n' | grep -vxE -- '-l(rt|pthread|tinfo|zstd|xml2|edit|curses|ncurses)' | paste -sd ' ' -)"
 fi
 printf '%s\n' "\$out"
 EOF
