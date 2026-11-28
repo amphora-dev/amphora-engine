@@ -63,7 +63,7 @@ NATIVE
   meson setup "$OUT/build" "$SRC" \
     --cross-file "$OUT/cross.txt" --native-file "$OUT/native.txt" \
     --prefix="$LVP_PREFIX" --libdir=lib \
-    --buildtype=release --wrap-mode=nodownload -Db_ndebug=true \
+    --buildtype=release --wrap-mode=nodownload -Db_ndebug=true -Dcpp_rtti=false \
     -Dplatforms=android \
     -Dplatform-sdk-version="$API" \
     -Dandroid-stub=true \
