@@ -43,6 +43,7 @@ jobs:
       run: bash ci/cache/snapshot.sh import "$SNAPSHOT_DIR"
 
     - name: Build Lavapipe
+      id: build
       run: |
         ./bst build mesa/lavapipe.bst
         rm -rf out/lavapipe
@@ -51,15 +52,21 @@ jobs:
 
     - name: Export snapshot
       id: export
-      if: steps.restore.outputs.cache-hit != 'true'
-      run: bash ci/cache/snapshot.sh export "$SNAPSHOT_DIR"
+      if: always() && steps.restore.outputs.cache-hit != 'true' && steps.build.outcome != 'skipped'
+      run: |
+        key="${{ steps.key.outputs.key }}"
+        if [ "${{ steps.build.outcome }}" != success ]; then
+          key="$key-partial-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+        fi
+        bash ci/cache/snapshot.sh export "$SNAPSHOT_DIR" --target mesa/lavapipe.bst | tee -a "$GITHUB_STEP_SUMMARY"
+        echo "key=$key" >> "$GITHUB_OUTPUT"
 
     - name: Save snapshot
-      if: steps.export.outcome == 'success'
+      if: always() && steps.export.outcome == 'success'
       uses: actions/cache/save@v4
       with:
         path: ${{ env.SNAPSHOT_DIR }}
-        key: ${{ steps.key.outputs.key }}
+        key: ${{ steps.export.outputs.key }}
 
     - name: Upload Lavapipe artifact
       uses: actions/upload-artifact@v4
