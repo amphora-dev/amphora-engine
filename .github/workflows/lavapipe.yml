@@ -9,6 +9,10 @@ on:
     branches: [exp/lavapipe]
   workflow_dispatch:
 
+permissions:
+  actions: write
+  contents: read
+
 concurrency:
   group: lavapipe-${{ github.ref }}
   cancel-in-progress: true
@@ -62,11 +66,24 @@ jobs:
         echo "key=$key" >> "$GITHUB_OUTPUT"
 
     - name: Save snapshot
+      id: save
       if: always() && steps.export.outcome == 'success'
       uses: actions/cache/save@v4
       with:
         path: ${{ env.SNAPSHOT_DIR }}
         key: ${{ steps.export.outputs.key }}
+
+    - name: Keep only the newest snapshot
+      if: always() && steps.save.outcome == 'success'
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+      run: |
+        gh cache list --ref "$GITHUB_REF" --key "$SNAPSHOT_PREFIX" --limit 100 \
+            --json id,createdAt --jq 'sort_by(.createdAt) | reverse | .[1:][]?.id' |
+          while read -r id; do
+            [ -n "$id" ] && gh api --method DELETE "repos/$GH_REPO/actions/caches/$id"
+          done
 
     - name: Upload Lavapipe artifact
       uses: actions/upload-artifact@v4
