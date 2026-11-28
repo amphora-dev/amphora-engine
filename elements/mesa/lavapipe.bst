@@ -23,6 +23,8 @@ sources:
 - kind: tar
   url: mesa:mesa-26.3.1.tar.xz
   ref: 4e4e438eac7b840a9383988cbb7c08dad8041da544b9319fc26d319fa7348961
+- kind: patch
+  path: elements/mesa/patches-lvp/lavapipe-anb-alias-layout.patch
 - kind: local
   path: scripts/lavapipe.sh
   directory: .bst/scripts

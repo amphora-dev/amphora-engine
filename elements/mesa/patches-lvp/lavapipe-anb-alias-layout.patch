@@ -1,0 +1,29 @@
+From: Amphora <amphora@users.noreply.github.com>
+Subject: [PATCH] lavapipe: resolve Android ANB layout for deferred (aliased) swapchain images
+
+When Android's libvulkan.so performs deferred gralloc buffer binding via
+vkBindImageMemory2 (VK_ANDROID_native_buffer), image->vk.android_buffer_type
+is ANDROID_BUFFER_NATIVE_ALIAS rather than ANDROID_BUFFER_NATIVE.
+
+lvp_bind_anb_memory() calls lvp_image_init() with the VkNativeBufferANDROID
+struct attached to pCreateInfo, but lvp_image_init() only checked
+vk_image_is_android_native_buffer(&image->vk). As a result, android_surface
+remained false, llvmpipe allocated a 64px-aligned non-linear layout larger
+than the linear gralloc buffer, and vk_android_import_anb() failed with
+VK_ERROR_INVALID_EXTERNAL_HANDLE ("failed to do deferred gralloc buffer bind").
+
+Check vk_image_is_android_native_buffer_alias() as well so deferred ANB
+images query vk_android_get_anb_layout() and import with the gralloc stride.
+---
+--- a/src/gallium/frontends/lavapipe/lvp_image.c
++++ b/src/gallium/frontends/lavapipe/lvp_image.c
+@@ -63,7 +63,8 @@
+    /* This section is removed by the optimizer for non-ANDROID builds */
+    VkImageDrmFormatModifierExplicitCreateInfoEXT eci;
+    VkSubresourceLayout a_plane_layouts[LVP_MAX_PLANE_COUNT];
+-   if (vk_image_is_android_native_buffer(&image->vk)) {
++   if (vk_image_is_android_native_buffer(&image->vk) ||
++       vk_image_is_android_native_buffer_alias(&image->vk)) {
+       VkResult result = vk_android_get_anb_layout(
+          pCreateInfo, &eci, a_plane_layouts, LVP_MAX_PLANE_COUNT);
+       if (result != VK_SUCCESS)
